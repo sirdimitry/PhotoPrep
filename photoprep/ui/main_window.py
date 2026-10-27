@@ -1,13 +1,14 @@
-"""Stage 1 PhotoPrep main window: workspace, navigation, import, settings.
+"""PhotoPrep workspace: read-only photos, sessions, navigation and history.
 
 No image processing or export occurs in this stage. All input image files are read-only.
 """
 from __future__ import annotations
 
 from pathlib import Path
+from collections import OrderedDict
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QIcon, QImageReader, QPixmap, QKeySequence, QShortcut
+from PySide6.QtGui import QIcon, QImageReader, QPixmap, QKeySequence, QAction
 from PySide6.QtWidgets import (
     QFrame, QFileDialog, QHBoxLayout, QLabel, QListView, QListWidget,
     QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QSizePolicy,
@@ -18,6 +19,8 @@ from .. import __version__
 from ..i18n import tr
 from ..models import Photo, list_folder_images
 from ..settings import Preferences
+from ..workspace import Workspace, ViewState
+from ..session import load_session, save_session, SessionError
 from .assets import app_icon_path, icon_path
 from .canvas import PhotoCanvas
 from .preferences_dialog import PreferencesDialog
@@ -90,8 +93,9 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.settings = Preferences()
-        self.photos: list[Photo] = []
-        self._indices: dict[Path, int] = {}
+        self.workspace = Workspace()
+        self.session_path: Path | None = None
+        self._thumbnail_icons = OrderedDict()
         self.setWindowTitle("PhotoPrep")
         self.setWindowIcon(QIcon(app_icon_path()))
         self.setStyleSheet(STYLESHEET)
@@ -107,8 +111,12 @@ class MainWindow(QMainWindow):
         shell.addWidget(self._build_body(), stretch=1)
         self.statusBar().setSizeGripEnabled(False)
         self.statusBar().showMessage(self.t("status_empty"))
-        self._setup_shortcuts()
+        self._setup_actions()
         self.retranslate()
+
+    @property
+    def photos(self):
+        return self.workspace.photos
 
     def t(self, key: str, **data) -> str:
         return tr(self.settings.language, key, **data)
@@ -224,7 +232,8 @@ class MainWindow(QMainWindow):
         horizontal.setSpacing(9)
         self.photo_label = QLabel()
         self.photo_label.setStyleSheet("font-weight:600;background:transparent;")
-        self.photo_label.setMinimumWidth(180)
+        self.photo_label.setMinimumWidth(100)
+        self.photo_label.setTextFormat(Qt.TextFormat.PlainText)
         self.photo_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         horizontal.addWidget(self.photo_label, stretch=1)
         self.zoom_out_button = self._tool_button("zoom-out")
@@ -250,6 +259,9 @@ class MainWindow(QMainWindow):
         self.canvas = PhotoCanvas()
         self.canvas.zoom_changed.connect(lambda value: self.zoom_value.setText(f"{value}%"))
         self.canvas.files_dropped.connect(self.import_paths)
+        self.canvas.photo_loaded.connect(self._photo_loaded)
+        self.canvas.loading_changed.connect(self._loading_changed)
+        self.canvas.view_changed.connect(self._view_changed)
         self.canvas.setAcceptDrops(True)
         self.stack.addWidget(self.empty)
         self.stack.addWidget(self.canvas)
@@ -257,13 +269,31 @@ class MainWindow(QMainWindow):
 
         strip = QWidget()
         strip.setObjectName("FilmstripPanel")
-        strip.setFixedHeight(146)
+        strip.setFixedHeight(170)
         vertical = QVBoxLayout(strip)
         vertical.setContentsMargins(13, 9, 13, 8)
         vertical.setSpacing(5)
         self.strip_title = QLabel()
         self.strip_title.setObjectName("SectionTitle")
-        vertical.addWidget(self.strip_title)
+        strip_bar = QHBoxLayout()
+        strip_bar.addWidget(self.strip_title, stretch=1)
+        self.photo_position = QLabel()
+        self.photo_position.setObjectName("SmallHint")
+        strip_bar.addWidget(self.photo_position)
+        self.previous_button = self._tool_button("chevron")
+        self.previous_button.setIcon(QIcon())
+        self.previous_button.setText("‹")
+        self.previous_button.clicked.connect(lambda: self.navigate(-1))
+        strip_bar.addWidget(self.previous_button)
+        self.next_button = self._tool_button("chevron")
+        self.next_button.setIcon(QIcon())
+        self.next_button.setText("›")
+        self.next_button.clicked.connect(lambda: self.navigate(1))
+        strip_bar.addWidget(self.next_button)
+        self.remove_button = self._tool_button("close")
+        self.remove_button.clicked.connect(self.remove_photo)
+        strip_bar.addWidget(self.remove_button)
+        vertical.addLayout(strip_bar)
         self.thumbnails = QListWidget()
         self.thumbnails.setViewMode(QListView.ViewMode.IconMode)
         self.thumbnails.setMovement(QListView.Movement.Static)
@@ -285,6 +315,7 @@ class MainWindow(QMainWindow):
         top = QLabel(title)
         top.setObjectName("SmallHint")
         bottom = QLabel(value)
+        bottom.setTextFormat(Qt.TextFormat.PlainText)
         bottom.setObjectName("Value")
         bottom.setWordWrap(True)
         group.addWidget(top)
@@ -336,17 +367,38 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.note)
         return panel
 
-    def _setup_shortcuts(self):
-        for seq, target in [
-            (QKeySequence.StandardKey.Open, self.open_photos),
-            ("Ctrl+Shift+O", self.open_folder),
-            ("Ctrl+0", self._fit),
-            ("Ctrl+1", self._actual),
-            ("Ctrl++", lambda: self.canvas.zoom(1.15)),
-            ("Ctrl+-", lambda: self.canvas.zoom(1 / 1.15)),
-        ]:
-            shortcut = QShortcut(seq if isinstance(seq, QKeySequence) else QKeySequence(seq), self)
-            shortcut.activated.connect(target)
+    def _setup_actions(self):
+        self.file_menu = self.menuBar().addMenu("")
+        self.edit_menu = self.menuBar().addMenu("")
+        self.view_menu = self.menuBar().addMenu("")
+        self.actions = {}
+        def action(menu, key, callback, shortcut=None):
+            item = QAction(self)
+            item.triggered.connect(callback)
+            if shortcut is not None:
+                item.setShortcut(shortcut)
+            menu.addAction(item)
+            self.actions[key] = item
+            return item
+        action(self.file_menu, "open_photos", self.open_photos, QKeySequence.StandardKey.Open)
+        action(self.file_menu, "open_folder", self.open_folder, "Ctrl+Shift+O")
+        self.file_menu.addSeparator()
+        action(self.file_menu, "new_workspace", self.new_workspace, QKeySequence.StandardKey.New)
+        action(self.file_menu, "open_workspace", self.open_workspace, "Ctrl+Alt+O")
+        action(self.file_menu, "save_workspace", self.save_workspace, QKeySequence.StandardKey.Save)
+        action(self.file_menu, "save_workspace_as", lambda: self.save_workspace(save_as=True), "Ctrl+Shift+S")
+        action(self.edit_menu, "undo", self.undo, QKeySequence.StandardKey.Undo)
+        action(self.edit_menu, "redo", self.redo, QKeySequence.StandardKey.Redo)
+        self.edit_menu.addSeparator()
+        item = action(self.edit_menu, "remove_photo", self.remove_photo)
+        item.setShortcuts([QKeySequence(Qt.Key.Key_Backspace), QKeySequence(Qt.Key.Key_Delete)])
+        action(self.view_menu, "previous_photo", lambda: self.navigate(-1), "Left")
+        action(self.view_menu, "next_photo", lambda: self.navigate(1), "Right")
+        self.view_menu.addSeparator()
+        action(self.view_menu, "fit", self._fit, "Ctrl+0")
+        action(self.view_menu, "actual", self._actual, "Ctrl+1")
+        action(self.view_menu, "zoom_in", lambda: self.canvas.zoom(1.15), "Ctrl++")
+        action(self.view_menu, "zoom_out", lambda: self.canvas.zoom(1 / 1.15), "Ctrl+-")
 
     def _fit(self):
         self.canvas.fit_photo()
@@ -364,60 +416,208 @@ class MainWindow(QMainWindow):
         if folder:
             self.import_paths([folder])
 
+    def _thumbnail(self, photo):
+        try:
+            stat = photo.path.stat()
+            key = (photo.path, stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            return None
+        if key in self._thumbnail_icons:
+            icon = self._thumbnail_icons.pop(key)
+            self._thumbnail_icons[key] = icon
+            return icon
+        reader = QImageReader(str(photo.path))
+        reader.setAutoTransform(True)
+        size = reader.size()
+        if size.isValid():
+            reader.setScaledSize(size.scaled(QSize(126, 80), Qt.AspectRatioMode.KeepAspectRatio))
+        image = reader.read()
+        if image.isNull():
+            return None
+        icon = QIcon(QPixmap.fromImage(image))
+        self._thumbnail_icons[key] = icon
+        while len(self._thumbnail_icons) > 256:
+            self._thumbnail_icons.popitem(last=False)
+        return icon
+
     def import_paths(self, paths: list[str]):
+        self._capture_view()
         image_paths = []
         for path in paths:
-            file = Path(path)
-            if file.is_dir():
-                image_paths.extend(list_folder_images(file))
-            else:
-                image_paths.append(file)
-        added = 0
+            try:
+                file = Path(path).expanduser()
+                image_paths.extend(list_folder_images(file) if file.is_dir() else [file])
+            except (OSError, ValueError):
+                continue
+        known = {p.path for p in self.photos}
+        photos = []
         for path in image_paths:
-            file = Path(path).expanduser().resolve()
-            if file in self._indices:
+            try:
+                photo = Photo.from_path(path)
+                if photo is not None and photo.path not in known and self._thumbnail(photo) is not None:
+                    photos.append(photo)
+                    known.add(photo.path)
+            except (OSError, ValueError, RuntimeError):
                 continue
-            photo = Photo.from_path(file)
-            if photo is None:
-                continue
-            reader = QImageReader(str(file))
-            reader.setAutoTransform(True)
-            natural_size = reader.size()
-            if natural_size.isValid():
-                reader.setScaledSize(natural_size.scaled(QSize(126, 80), Qt.AspectRatioMode.KeepAspectRatio))
-            thumbnail = reader.read()
-            if thumbnail.isNull():
-                continue
-            self._indices[file] = len(self.photos)
-            self.photos.append(photo)
-            item = QListWidgetItem(QIcon(QPixmap.fromImage(thumbnail)), file.name)
-            item.setToolTip(str(file))
-            item.setSizeHint(QSize(150, 104))
-            item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
-            self.thumbnails.addItem(item)
-            added += 1
+        added = self.workspace.add(photos)
         if added:
+            self._present_workspace()
+        else:
+            self.statusBar().showMessage(self.t("no_new_images"), 6000)
+        return added
+
+    def _capture_view(self):
+        if self.canvas.view_dirty and self.canvas.current_path and Path(self.canvas.current_path) == self.workspace.selected:
+            self.workspace.views[self.workspace.selected] = self.canvas.view_state()
+            self.canvas.view_dirty = False
+
+    def _view_changed(self):
+        self._capture_view()
+        self._update_title()
+
+    def _update_title(self):
+        name = self.session_path.name if self.session_path else self.t("untitled_workspace")
+        self.setWindowTitle(f"PhotoPrep — {name}[*]")
+        self.setWindowModified(self.workspace.dirty)
+
+    def _present_workspace(self):
+        self.thumbnails.blockSignals(True)
+        try:
+            self.thumbnails.clear()
+            for photo in self.photos:
+                item = QListWidgetItem(self._thumbnail(photo) or QIcon(), photo.path.name)
+                item.setToolTip(str(photo.path))
+                item.setSizeHint(QSize(150, 104))
+                item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
+                self.thumbnails.addItem(item)
+            self.thumbnails.setCurrentRow(self.workspace.index)
+        finally:
+            self.thumbnails.blockSignals(False)
+        if self.workspace.index >= 0:
             self.stack.setCurrentWidget(self.canvas)
-            if self.thumbnails.currentRow() < 0:
-                self.thumbnails.setCurrentRow(0)
-            else:
-                # Keep selection, but update photo count.
-                self._update_info(self.photos[self.thumbnails.currentRow()])
-            self.statusBar().showMessage(self.t("status_loaded", count=len(self.photos)), 6000)
-        elif not self.photos:
-            QMessageBox.information(self, "PhotoPrep", self.t("no_images"))
-        self._refresh_controls()
-        self.strip_title.setText(f'{self.t("photos")}  ·  {len(self.photos)}')
+            photo = self.photos[self.workspace.index]
+            self._update_info(photo)
+            self.canvas.load_photo(str(photo.path), self.workspace.views.get(photo.path, ViewState()))
+        else:
+            self.canvas.clear_photo()
+            self.stack.setCurrentWidget(self.empty)
+        self.retranslate()
 
     def select_photo(self, index: int):
         if not 0 <= index < len(self.photos):
             return
+        self._capture_view()
         photo = self.photos[index]
-        if not self.canvas.load_photo(str(photo.path)):
-            QMessageBox.warning(self, "PhotoPrep", self.t("invalid_image", path=photo.path.name))
-            return
+        self.workspace.selected = photo.path
         self._update_info(photo)
+        self.canvas.load_photo(str(photo.path), self.workspace.views.get(photo.path, ViewState()))
         self._refresh_controls()
+        self._update_title()
+
+    def _loading_changed(self, loading):
+        self._refresh_controls()
+        if loading:
+            self.statusBar().showMessage(self.t("loading_photo"))
+
+    def _photo_loaded(self, path, success):
+        self._refresh_controls()
+        self.statusBar().showMessage(self.t("status_loaded", count=len(self.photos)) if success
+                                     else self.t("invalid_image", path=Path(path).name))
+
+    def navigate(self, delta):
+        index = self.workspace.index + delta
+        if 0 <= index < len(self.photos):
+            self.thumbnails.setCurrentRow(index)
+
+    def remove_photo(self):
+        self._capture_view()
+        if self.workspace.remove_selected():
+            self._present_workspace()
+            self.statusBar().showMessage(self.t("removed_from_workspace"), 6000)
+
+    def undo(self):
+        self._capture_view()
+        if self.workspace.undo():
+            self._present_workspace()
+
+    def redo(self):
+        self._capture_view()
+        if self.workspace.redo():
+            self._present_workspace()
+
+    def new_workspace(self):
+        if not self._confirm_discard():
+            return
+        self.workspace = Workspace()
+        self.session_path = None
+        self._present_workspace()
+
+    def open_workspace(self):
+        path, _ = QFileDialog.getOpenFileName(self, self.t("open_workspace"), str(Path.home()), self.t("workspace_filter"))
+        if path:
+            self.open_session_file(Path(path))
+
+    def open_session_file(self, path: Path):
+        try:
+            workspace, skipped = load_session(path)
+        except (OSError, SessionError) as exc:
+            key = str(exc) if isinstance(exc, SessionError) else "session_open_error"
+            QMessageBox.warning(self, "PhotoPrep", self.t(key))
+            return False
+        if not self._confirm_discard():
+            return False
+        self.workspace = workspace
+        self.session_path = path.expanduser().resolve()
+        self._present_workspace()
+        if skipped:
+            QMessageBox.information(self, "PhotoPrep", self.t("session_skipped", count=skipped))
+        return True
+
+    def save_workspace(self, checked=False, *, save_as=False):
+        self._capture_view()
+        path = self.session_path
+        if path is None or save_as:
+            path_text, _ = QFileDialog.getSaveFileName(
+                self, self.t("save_workspace"), str(path or Path.home() / "Untitled.photoprep.json"), self.t("workspace_filter"))
+            if not path_text:
+                return False
+            if not path_text.lower().endswith(".photoprep.json"):
+                path_text += ".photoprep.json"
+            path = Path(path_text)
+        try:
+            save_session(path, self.workspace)
+        except (OSError, SessionError):
+            QMessageBox.warning(self, "PhotoPrep", self.t("session_save_error"))
+            return False
+        self.session_path = path.resolve()
+        self.workspace.mark_saved()
+        self._update_title()
+        self.statusBar().showMessage(self.t("session_saved"), 6000)
+        return True
+
+    def _confirm_discard(self):
+        self._capture_view()
+        if not self.workspace.dirty:
+            return True
+        box = QMessageBox(self)
+        box.setWindowTitle(self.t("unsaved_title"))
+        box.setText(self.t("unsaved_message"))
+        box.setIcon(QMessageBox.Icon.Question)
+        save = box.addButton(self.t("save"), QMessageBox.ButtonRole.AcceptRole)
+        discard = box.addButton(self.t("discard"), QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton(self.t("cancel"), QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(save)
+        box.exec()
+        if box.clickedButton() == save:
+            return self.save_workspace()
+        return box.clickedButton() == discard
+
+    def closeEvent(self, event):
+        if self._confirm_discard():
+            self.canvas.clear_photo()
+            event.accept()
+        else:
+            event.ignore()
 
     def _update_info(self, photo: Photo):
         self.photo_label.setText(photo.path.name)
@@ -429,6 +629,19 @@ class MainWindow(QMainWindow):
         enabled = self.canvas.has_photo
         for button in (self.fit_button, self.actual_button, self.zoom_in_button, self.zoom_out_button):
             button.setEnabled(enabled)
+        index = self.workspace.index
+        self.previous_button.setEnabled(index > 0)
+        self.next_button.setEnabled(0 <= index < len(self.photos) - 1)
+        self.remove_button.setEnabled(index >= 0)
+        self.photo_position.setText(self.t("images_loaded", index=index + 1, total=len(self.photos)) if self.photos else "")
+        if hasattr(self, "actions"):
+            self.actions["undo"].setEnabled(self.workspace.can_undo)
+            self.actions["redo"].setEnabled(self.workspace.can_redo)
+            self.actions["remove_photo"].setEnabled(index >= 0)
+            self.actions["previous_photo"].setEnabled(index > 0)
+            self.actions["next_photo"].setEnabled(0 <= index < len(self.photos) - 1)
+            for key in ("fit", "actual", "zoom_in", "zoom_out"):
+                self.actions[key].setEnabled(enabled)
 
     def open_settings(self):
         dialog = PreferencesDialog(self.settings, self)
@@ -437,6 +650,18 @@ class MainWindow(QMainWindow):
 
     def retranslate(self):
         t = self.t
+        self.file_menu.setTitle(t("file_menu"))
+        self.edit_menu.setTitle(t("edit_menu"))
+        self.view_menu.setTitle(t("view_menu"))
+        for key, action in self.actions.items():
+            action.setText(t(key))
+        self.previous_button.setToolTip(t("previous_photo"))
+        self.previous_button.setAccessibleName(t("previous_photo"))
+        self.next_button.setToolTip(t("next_photo"))
+        self.next_button.setAccessibleName(t("next_photo"))
+        self.remove_button.setToolTip(t("remove_photo"))
+        self.remove_button.setAccessibleName(t("remove_photo"))
+        self._update_title()
         self.open_files_button.setText(t("open_photos"))
         self.open_folder_button.setText(t("open_folder"))
         self.export_button.setText(t("export"))
@@ -463,5 +688,5 @@ class MainWindow(QMainWindow):
         self.filename_value.setText(self.photos[self.thumbnails.currentRow()].path.name if self.photos and self.thumbnails.currentRow() >= 0 else "—")
         self.source_value.setText("—" if not self.photos or self.thumbnails.currentRow() < 0 else f"{self.photos[self.thumbnails.currentRow()].width} × {self.photos[self.thumbnails.currentRow()].height} px")
         self.export_value.setText(f"{self.settings.output_width} × {self.settings.output_height} px")
-        self.statusBar().showMessage(t("status_loaded", count=len(self.photos)) if self.photos else t("status_empty"))
+        self.statusBar().showMessage(t("loading_photo") if self.canvas.loading else t("status_loaded", count=len(self.photos)) if self.photos else t("status_empty"))
         self._refresh_controls()

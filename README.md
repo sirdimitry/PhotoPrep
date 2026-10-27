@@ -11,7 +11,7 @@
 ![PhotoPrep — AI cleanup, cropping, branding and batch workflows](assets/github-banner.png)
 
 <p align="center">
-  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.2-FACC15?style=flat-square&labelColor=202227">
+  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.3-FACC15?style=flat-square&labelColor=202227">
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-33373d?style=flat-square">
   <img alt="Language" src="https://img.shields.io/badge/UI-English%20%2B%20Русский-33373d?style=flat-square">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-33373d?style=flat-square"></a>
@@ -21,13 +21,15 @@
 
 **PhotoPrep** is a free, local-first photo preparation app for macOS. Its goal is to simplify repetitive website-image work: mask and remove unwanted logos with local inpainting models, crop to a consistent frame, optionally add your own brand mark, then export clean files without hidden metadata.
 
-**Current status: early alpha / Stage 1.** The present build is a **working desktop workspace**, not yet an AI remover. Only the features marked *Available now* below are implemented. No external image upload is performed.
+**Current status: early alpha / Stage 2.** The present build is a **working desktop workspace**, not yet an AI remover. Only the features marked *Available now* below are implemented. No external image upload is performed.
 
 ### Features
 
 | Feature | Status |
 |:--|:--|
 | Open individual photos or an image folder; photo filmstrip | ✅ Available now |
+| Save/open a local workspace, remember per-photo zoom/pan | ✅ Available now |
+| Undo/redo photo imports and removals; previous/next navigation | ✅ Available now |
 | Dark graphite interface with yellow accents | ✅ Available now |
 | English/Russian UI, switchable in Preferences | ✅ Available now |
 | Zoom with mouse wheel, drag to pan, 100%, Fit view | ✅ Available now |
@@ -41,7 +43,7 @@
 
 ### Get it
 
-**[Download v0.1.0-alpha.2 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.2)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
+**[Download v0.1.0-alpha.3 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.3)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
 
 This early alpha is **ad-hoc signed and not notarized**, so macOS may display a security warning. Verified on macOS 27.2 / Apple Silicon; Intel and other macOS versions have not been tested. See [verified changes](CHANGELOG.md).
 
@@ -64,16 +66,22 @@ Requires **Python 3.11+** and installs **PySide6**. The application does not dow
 |:--|:--|
 | Open photos | `⌘ O` |
 | Open folder | `⌘ Shift O` |
+| Open / save workspace | `⌘ ⌥ O` / `⌘ S` |
+| Previous / next photo | `←` / `→` |
+| Remove from workspace | `Delete` |
+| Undo / redo collection changes | `⌘ Z` / `⌘ Shift Z` |
 | Zoom | Mouse wheel / trackpad scroll, or toolbar `+ / −` |
 | Pan | Drag on the photo |
 | Fit photo in view | `⌘ 0` |
 | Actual pixels (100%) | `⌘ 1` |
 
+Workspace files (`.photoprep.json`) store local image paths and viewing positions, not image copies. Missing sources are reported when reopening; removing a photo from the workspace keeps its original file. Workspace history covers adding/removing photos, not pixel edits.
+
 ### Roadmap
 
 - **Stage 0** — brand identity, app icon, GitHub banner.
-- **Stage 1** — desktop UI, photo import/preview, thumbnails, preferences, bilingual interface. **Current**.
-- **Stage 2** — document state, interaction history, high-quality photo navigation.
+- **Stage 1** — desktop UI, photo import/preview, thumbnails, preferences, bilingual interface. Complete.
+- **Stage 2** — workspace sessions, collection history, background photo decoding and bounded cache. **Current**.
 - **Stage 3** — mask painting and crop frame tools.
 - **Stage 4** — LaMa-based local inpainting; preview and masked-only compositing.
 - **Stage 5** — curated model catalog and validated downloads from Hugging Face.

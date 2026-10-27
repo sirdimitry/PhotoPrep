@@ -1,6 +1,6 @@
 # Development
 
-Current version: **0.1.0-alpha.2**, Stage 1 photo workspace.
+Current version: **0.1.0-alpha.3**, Stage 2 photo workspace.
 The original alpha.1 source commit is retained in Git history.
 
 ## Run and test
@@ -23,7 +23,7 @@ preferences or source photographs.
 
 ## Layout
 
-- `photoprep/`: image metadata, preferences, translations and application entry point.
+- `photoprep/`: image metadata, workspace/history, session storage, preferences and translations.
 - `photoprep/ui/`: window, read-only canvas, settings dialog and theme.
 - `assets/`: approved icon, banner and interface artwork.
 - `tests/`: language, image import, navigation and preference regression checks.
@@ -37,9 +37,9 @@ After installing dependencies in the virtual environment:
 ```bash
 PYTHON="$PWD/.venv/bin/python" bash scripts/build_macos.sh
 open dist/PhotoPrep.app
-hdiutil verify dist/PhotoPrep-0.1.0-alpha.2-macos-arm64.dmg
+hdiutil verify dist/PhotoPrep-0.1.0-alpha.3-macos-arm64.dmg
 cd dist
-shasum -a 256 -c PhotoPrep-0.1.0-alpha.2-macos-arm64.dmg.sha256
+shasum -a 256 -c PhotoPrep-0.1.0-alpha.3-macos-arm64.dmg.sha256
 ```
 
 The script reads the application version and Python architecture, generates an
@@ -59,4 +59,6 @@ manual dispatch. It does not replace the verified local release binary.
 Publish a GitHub prerelease from the verified tag with the DMG and SHA256 file.
 Both READMEs must link to that release. See `CHANGELOG.md` for verified changes
 and current limits. There are no model downloads, AI inference, crop or export
-operations in Stage 1.
+operations in Stage 2.
+
+Session files contain private local image paths and are ignored by Git. They are saved atomically with owner-only permissions. Packaging copies only an explicit list of UI images; sessions, working files and the repository are not bundled. Photo decoding runs on two background workers; the decoded image cache is bounded at 128 MiB. There is no automatic session upload or persistence.

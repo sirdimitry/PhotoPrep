@@ -39,3 +39,6 @@ credentials*.json
 *.bundle
 *-source.zip
 backups/
+
+# Local sessions contain private photo paths
+*.photoprep.json

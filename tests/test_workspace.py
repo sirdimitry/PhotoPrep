@@ -5,6 +5,7 @@ import pytest
 from PIL import Image
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QApplication, QDialogButtonBox
+from PySide6.QtTest import QTest
 
 from photoprep.models import Photo
 from photoprep.settings import Preferences
@@ -14,7 +15,9 @@ from photoprep.ui.preferences_dialog import PreferencesDialog
 
 @pytest.fixture(scope="module")
 def app():
-    return QApplication.instance() or QApplication([])
+    application = QApplication.instance() or QApplication([])
+    application.setQuitOnLastWindowClosed(False)
+    return application
 
 
 @pytest.fixture
@@ -40,6 +43,7 @@ def test_workspace_import_zoom_and_language(app, preferences, monkeypatch, tmp_p
     Image.new("RGB", (1600, 900), "#facc15").save(source)
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     window = MainWindow()
+    window._confirm_discard = lambda: True
     window.show()
     app.processEvents()
     try:
@@ -49,13 +53,17 @@ def test_workspace_import_zoom_and_language(app, preferences, monkeypatch, tmp_p
         window.import_paths([str(source), str(source)])
         app.processEvents()
         assert len(window.photos) == 1
+        for _ in range(200):
+            if not window.canvas.loading:
+                break
+            QTest.qWait(10)
         assert window.canvas.has_photo
         assert window.source_value.text() == "1600 × 900 px"
         assert not window.export_button.isEnabled()
         window.canvas.actual_size()
-        assert window.canvas.transform().m11() == 1
+        assert window.canvas.transform().m11() * window.canvas.devicePixelRatioF() == 1
         window.canvas.zoom(1.15)
-        assert window.canvas.transform().m11() == pytest.approx(1.15)
+        assert window.canvas.transform().m11() * window.canvas.devicePixelRatioF() == pytest.approx(1.15)
         window.canvas.fit_photo()
         assert window.canvas.transform().m11() < 1
         preferences.language = "ru"

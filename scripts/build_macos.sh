@@ -14,12 +14,29 @@ export PYINSTALLER_CONFIG_DIR="${PYINSTALLER_CONFIG_DIR:-$PWD/work/pyinstaller-c
 
 # Install .[dev] in the active virtual environment before calling this script.
 iconutil -c icns assets/PhotoPrep.iconset -o assets/app-icon.icns
+"$PYTHON" - <<'ASSETS'
+from pathlib import Path
+import shutil
+root = Path.cwd()
+target = root / "work/runtime-assets"
+if target.exists():
+    shutil.rmtree(target)
+(target / "icons").mkdir(parents=True)
+names = ("files", "folder", "export", "settings", "move", "brush", "eraser",
+         "crop", "logo", "compare", "info", "zoom-in", "zoom-out", "close", "chevron")
+paths = [Path("app-icon.png"), *(Path("icons") / (name + ".png") for name in names)]
+for relative in paths:
+    source = root / "assets" / relative
+    if not source.is_file() or source.is_symlink():
+        raise RuntimeError("Missing or symlinked runtime asset: " + str(relative))
+    shutil.copyfile(source, target / relative)
+ASSETS
 "$PYTHON" -m PyInstaller \
   --noconfirm --clean --windowed --onedir \
   --name "PhotoPrep" --icon "assets/app-icon.icns" \
   --osx-bundle-identifier "com.sirdimitry.PhotoPrep" \
   --target-architecture "$ARCH" \
-  --add-data "assets:assets" \
+  --add-data "work/runtime-assets:assets" \
   launcher.py
 
 "$PYTHON" - <<'PY'
