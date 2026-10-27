@@ -26,3 +26,16 @@ models/
 *.pth
 *.pt
 *.onnx
+
+# Private files and local transfer archives
+.ssh/
+.aws/
+.netrc
+*.pem
+*.key
+credentials*.json
+*service-account*.json
+*.log
+*.bundle
+*-source.zip
+backups/
