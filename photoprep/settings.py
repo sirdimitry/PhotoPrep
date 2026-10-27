@@ -6,8 +6,15 @@ from PySide6.QtCore import QLocale, QSettings
 
 
 class Preferences:
-    def __init__(self) -> None:
-        self._q = QSettings("sirdimitry", "PhotoPrep")
+    def __init__(self, store: QSettings | None = None) -> None:
+        self._q = store if store is not None else QSettings("sirdimitry", "PhotoPrep")
+
+    def _dimension(self, key: str, default: int) -> int:
+        try:
+            value = int(self._q.value(key, default))
+        except (TypeError, ValueError, OverflowError):
+            return default
+        return value if 128 <= value <= 16000 else default
 
     @property
     def language(self) -> str:
@@ -23,7 +30,7 @@ class Preferences:
 
     @property
     def output_width(self) -> int:
-        return int(self._q.value("export/width", 1136))
+        return self._dimension("export/width", 1136)
 
     @output_width.setter
     def output_width(self, value: int) -> None:
@@ -31,7 +38,7 @@ class Preferences:
 
     @property
     def output_height(self) -> int:
-        return int(self._q.value("export/height", 710))
+        return self._dimension("export/height", 710)
 
     @output_height.setter
     def output_height(self, value: int) -> None:

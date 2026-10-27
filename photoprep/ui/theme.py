@@ -1,7 +1,8 @@
 """Neutral graphite design language with a restrained yellow accent."""
 
 STYLESHEET = """
-QWidget { background: #1C1E22; color: #EBEDF0; font-family: -apple-system, 'SF Pro Text', 'Inter', sans-serif; font-size: 13px; }
+QWidget { background: #1C1E22; color: #EBEDF0; font-family: 'Helvetica Neue', 'Arial', sans-serif; font-size: 13px; }
+QLabel { background: transparent; }
 QMainWindow { background: #1C1E22; }
 QWidget#Header { background: #25272B; border-bottom: 1px solid #373A40; }
 QWidget#ToolRail { background: #24262A; border-right: 1px solid #373A40; }

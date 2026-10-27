@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtGui import QImageReader
+from PySide6.QtGui import QImageIOHandler, QImageReader
 
 SUPPORTED_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp"})
 
@@ -30,6 +30,9 @@ class Photo:
             if image.isNull():
                 return None
             size = image.size()
+        elif reader.transformation() & QImageIOHandler.Transformation.TransformationRotate90:
+            # Header dimensions precede EXIF orientation; the preview applies it.
+            size.transpose()
         return cls(file, size.width(), size.height())
 
 

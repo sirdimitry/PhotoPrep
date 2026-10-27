@@ -10,7 +10,7 @@
 
 ![PhotoPrep — удаление логотипов, кадрирование, новый логотип и пакетная обработка](assets/github-banner.png)
 
-<p align="center"><img alt="Версия" src="https://img.shields.io/badge/версия-0.1.0--alpha.1-FACC15?style=flat-square&labelColor=202227"> <img alt="Платформа" src="https://img.shields.io/badge/macOS-Apple%20Silicon-33373d?style=flat-square"> <img alt="Лицензия" src="https://img.shields.io/badge/лицензия-MIT-33373d?style=flat-square"></p>
+<p align="center"><img alt="Версия" src="https://img.shields.io/badge/версия-0.1.0--alpha.2-FACC15?style=flat-square&labelColor=202227"> <img alt="Платформа" src="https://img.shields.io/badge/macOS-Apple%20Silicon-33373d?style=flat-square"> <img alt="Лицензия" src="https://img.shields.io/badge/лицензия-MIT-33373d?style=flat-square"></p>
 
 ## Что такое PhotoPrep?
 
@@ -36,7 +36,9 @@
 
 ### Как попробовать
 
-Готовый `.dmg` будет публиковаться в [GitHub Releases](https://github.com/sirdimitry/PhotoPrep/releases) **после сборки и проверки на Mac**. Сейчас **DMG ещё не опубликован**.
+**[Скачать v0.1.0-alpha.2 для macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.2)** — DMG и контрольная сумма SHA256. Требуется **macOS 14+**; устанавливать Python отдельно не нужно. Перетащи PhotoPrep в Applications.
+
+Это ранняя альфа с **ad-hoc подписью, без нотарификации Apple**: macOS может показать предупреждение при открытии скачанного приложения. Проверено на macOS 27.2 / Apple Silicon; Intel и другие версии macOS не проверялись. [Список изменений](CHANGELOG.md).
 
 Запуск из исходников на macOS с Python 3.11+:
 

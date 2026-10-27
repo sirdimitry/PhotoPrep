@@ -57,6 +57,8 @@ class PreferencesDialog(QDialog):
         root.addWidget(advanced)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(t("save"))
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(t("cancel"))
         buttons.accepted.connect(self.apply_and_close)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
