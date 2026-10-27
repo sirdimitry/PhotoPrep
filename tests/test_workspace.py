@@ -84,7 +84,7 @@ def test_settings_cancel_and_apply(app, preferences):
     dialog.reject()
     assert preferences.output_width == 1136
     dialog = PreferencesDialog(preferences)
-    dialog.language.setCurrentIndex(dialog.language.findData("en"))
+    dialog.language_buttons["en"].click()
     dialog.width_input.setValue(1920)
     dialog.height_input.setValue(1080)
     dialog.apply_and_close()

@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.1.0-alpha.4 — 2026-10-27
+
+Stage 3 begins with mask/crop plans and fixes the macOS settings layout.
+
+- Replace the clipped native language popup with two separate language buttons.
+  Translate the whole dialog immediately, retaining Save/Cancel semantics.
+- Use padded, right-aligned validated dimension fields; localize all labels and
+  buttons consistently and retain output dimensions in each workspace.
+- Add a mask brush and eraser with size control, visible cursor, colored overlay,
+  clear/show controls and temporary Space-to-pan.
+- Add a fixed-output-ratio crop frame with corner resizing, dragging, thirds grid,
+  reset/clear and fit-in-view controls. Output-size changes adapt frames atomically.
+- Undo/redo mask gestures, crop changes, clearing and output-size changes without
+  altering original images.
+- Store normalized mask/crop plans and output size in session format 2; retain
+  read compatibility for format 1. Older app versions cannot open format 2.
+
+Validation: 41 tests passed offscreen and in a macOS GUI session with existing
+Python/PySide6 dependencies. Tests cover the settings layout, mask/eraser pixels,
+source integrity, crop bounds/ratio, edit history, session round trips and malformed
+geometry. Packaged code was also checked in an isolated app copy: Russian/English
+settings, padded dimensions, brush/eraser gestures, corner resizing, Cmd+Z/Shift+Cmd+Z
+and Cmd+S. Its application payload matched the release bundle. AI inference and
+image export remain unavailable.
+
 ## v0.1.0-alpha.3 — 2026-10-27
 
 Stage 2: persistent workspaces and photo navigation.

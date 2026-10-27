@@ -9,6 +9,9 @@ QWidget#ToolRail { background: #24262A; border-right: 1px solid #373A40; }
 QWidget#Inspector { background: #24262A; border-left: 1px solid #383B41; }
 QWidget#FilmstripPanel { background: #222428; border-top: 1px solid #363940; }
 QWidget#Workspace { background: #14161A; }
+QStackedWidget#ToolOptions { background: #24262A; border-bottom: 1px solid #373A40; }
+QSlider::groove:horizontal { height: 4px; background: #4B5059; border-radius: 2px; }
+QSlider::handle:horizontal { background: #FACC15; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; }
 QWidget#ImageBar { background: #1F2126; border-bottom: 1px solid #363940; }
 QLabel#BrandName { font-size: 19px; font-weight: 750; letter-spacing: -0.4px; }
 QLabel#SmallHint { color: #888D97; font-size: 11px; }
@@ -41,6 +44,12 @@ QStatusBar { background: #25272B; color: #9EA2AC; border-top: 1px solid #363940;
 QDialog { background: #222428; }
 QSpinBox, QComboBox { border: 1px solid #494C53; border-radius: 7px; background: #31353B; padding: 8px; min-height: 18px; }
 QComboBox QAbstractItemView { background: #31353B; color: #EFF1F3; selection-background-color: #555138; }
+QPushButton#LanguageChoice:checked { background: #48432B; color: #FACC15; border: 1px solid #FACC15; }
+QToolButton#SettingsDisclosure { background: transparent; border: none; padding: 8px 0; text-align: left; }
+QFrame#SettingsCard { background: #292C31; border: 1px solid #3D424A; border-radius: 9px; }
+QLineEdit#DimensionInput { color: #EBEDF0; min-height: 40px; background: #34383F; border: 1px solid #535963; padding: 0; border-radius: 7px; }
+QLineEdit#DimensionInput:focus { border-color: #FACC15; }
+
 QGroupBox { border: 1px solid #40434A; border-radius: 8px; margin-top: 12px; padding: 12px; font-weight: 650; }
 QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; }
 QSplitter::handle { background: #31343A; width: 1px; }

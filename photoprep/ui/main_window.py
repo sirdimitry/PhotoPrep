@@ -10,7 +10,7 @@ from collections import OrderedDict
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon, QImageReader, QPixmap, QKeySequence, QAction
 from PySide6.QtWidgets import (
-    QFrame, QFileDialog, QHBoxLayout, QLabel, QListView, QListWidget,
+    QFrame, QFileDialog, QHBoxLayout, QLabel, QListView, QListWidget, QButtonGroup, QSlider, QCheckBox,
     QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QSizePolicy,
     QSplitter, QStackedWidget, QToolButton, QVBoxLayout, QWidget,
 )
@@ -20,9 +20,10 @@ from ..i18n import tr
 from ..models import Photo, list_folder_images
 from ..settings import Preferences
 from ..workspace import Workspace, ViewState
+from ..editing import PhotoEdits
 from ..session import load_session, save_session, SessionError
 from .assets import app_icon_path, icon_path
-from .canvas import PhotoCanvas
+from .editor import EditorCanvas as PhotoCanvas
 from .preferences_dialog import PreferencesDialog
 from .theme import STYLESHEET
 
@@ -93,7 +94,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.settings = Preferences()
-        self.workspace = Workspace()
+        self.workspace = Workspace(output_width=self.settings.output_width, output_height=self.settings.output_height)
         self.session_path: Path | None = None
         self._thumbnail_icons = OrderedDict()
         self.setWindowTitle("PhotoPrep")
@@ -148,6 +149,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(wordmark)
         badge = QLabel("ALPHA 0.1")
         badge.setObjectName("Badge")
+        badge.setToolTip(__version__)
         layout.addSpacing(2)
         layout.addWidget(badge, alignment=Qt.AlignmentFlag.AlignVCenter)
         layout.addSpacing(15)
@@ -200,15 +202,17 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(10, 16, 10, 12)
         layout.setSpacing(7)
         self.tools = {}
+        self.tool_group = QButtonGroup(self)
         for key, icon in [("select", "move"), ("mask", "brush"), ("erase", "eraser"),
                           ("crop", "crop"), ("logo", "logo"), ("compare", "compare")]:
             button = self._tool_button(icon, rail=True)
             button.setToolTip(key)
-            if key == "select":
+            if key in ("select", "mask", "erase", "crop"):
                 button.setCheckable(True)
-                button.setChecked(True)
-            else:
-                button.setEnabled(False)
+                self.tool_group.addButton(button)
+                button.setChecked(key == "select")
+                button.toggled.connect(lambda checked, tool=key: self._select_tool(tool) if checked else None)
+            button.setEnabled(key == "select")
             self.tools[key] = button
             layout.addWidget(button)
         layout.addStretch(1)
@@ -262,7 +266,11 @@ class MainWindow(QMainWindow):
         self.canvas.photo_loaded.connect(self._photo_loaded)
         self.canvas.loading_changed.connect(self._loading_changed)
         self.canvas.view_changed.connect(self._view_changed)
+        self.canvas.edits_committed.connect(self._edits_committed)
+        self.canvas.crop_changed.connect(self._crop_info_changed)
         self.canvas.setAcceptDrops(True)
+        self.tool_options = self._build_tool_options()
+        container.addWidget(self.tool_options)
         self.stack.addWidget(self.empty)
         self.stack.addWidget(self.canvas)
         container.addWidget(self.stack, stretch=1)
@@ -309,6 +317,94 @@ class MainWindow(QMainWindow):
         container.addWidget(strip)
         return center
 
+    def _build_tool_options(self):
+        options = QStackedWidget()
+        options.setObjectName("ToolOptions")
+        options.setFixedHeight(78)
+        mask = QWidget()
+        layout = QVBoxLayout(mask)
+        layout.setContentsMargins(18, 6, 18, 6)
+        layout.setSpacing(4)
+        row = QHBoxLayout()
+        self.brush_label = QLabel()
+        row.addWidget(self.brush_label)
+        self.brush_slider = QSlider(Qt.Orientation.Horizontal)
+        self.brush_slider.setRange(2,512)
+        self.brush_slider.setValue(self.canvas.brush_size)
+        self.brush_slider.setMinimumWidth(90)
+        self.brush_slider.valueChanged.connect(self._brush_changed)
+        row.addWidget(self.brush_slider, stretch=1)
+        self.brush_value = QLabel()
+        self.brush_value.setMinimumWidth(55)
+        row.addWidget(self.brush_value)
+        self.show_mask = QCheckBox()
+        self.show_mask.setChecked(True)
+        self.show_mask.toggled.connect(self.canvas.set_mask_visible)
+        row.addWidget(self.show_mask)
+        layout.addLayout(row)
+        second = QHBoxLayout()
+        self.mask_hint = QLabel()
+        self.mask_hint.setObjectName("SmallHint")
+        second.addWidget(self.mask_hint, stretch=1)
+        self.clear_mask_button = QPushButton()
+        self.clear_mask_button.clicked.connect(self.canvas.clear_mask)
+        second.addWidget(self.clear_mask_button)
+        layout.addLayout(second)
+        options.addWidget(mask)
+        crop = QWidget()
+        layout = QVBoxLayout(crop)
+        layout.setContentsMargins(18,6,18,6)
+        row = QHBoxLayout()
+        self.crop_info = QLabel()
+        self.crop_info.setObjectName("SmallHint")
+        row.addWidget(self.crop_info, stretch=1)
+        self.crop_hint = QLabel()
+        self.crop_hint.setObjectName("SmallHint")
+        row.addWidget(self.crop_hint)
+        layout.addLayout(row)
+        row = QHBoxLayout()
+        self.reset_crop_button, self.fit_crop_button, self.clear_crop_button = QPushButton(), QPushButton(), QPushButton()
+        self.reset_crop_button.clicked.connect(self.canvas.reset_crop)
+        self.fit_crop_button.clicked.connect(self.canvas.fit_crop_view)
+        self.clear_crop_button.clicked.connect(self.canvas.clear_crop)
+        for button in (self.reset_crop_button,self.fit_crop_button,self.clear_crop_button):
+            row.addWidget(button)
+        row.addStretch(1)
+        layout.addLayout(row)
+        options.addWidget(crop)
+        options.setVisible(False)
+        return options
+
+    def _select_tool(self, tool):
+        if not self.tools[tool].isChecked():
+            self.tools[tool].setChecked(True)
+            return
+        self.canvas.set_tool(tool)
+        self.tool_options.setCurrentIndex(1 if tool=="crop" else 0)
+        self.tool_options.setVisible(tool!="select")
+        self._refresh_controls()
+        self.canvas.setFocus()
+
+    def _brush_changed(self, value):
+        self.canvas.set_brush_size(value)
+        self.brush_value.setText(self.t("brush_pixels", size=value))
+
+    def _crop_info_changed(self):
+        if not hasattr(self,"crop_info"):
+            return
+        overlay = self.canvas._crop_overlay
+        if overlay:
+            rect = overlay.crop.pixels(overlay.width,overlay.height)
+            self.crop_info.setText(self.t("crop_dimensions",width=round(rect.width()),height=round(rect.height())))
+        else:
+            self.crop_info.setText("—")
+
+    def _edits_committed(self, path, edits):
+        self._capture_view(finish_stroke=False)
+        if self.workspace.set_edits(Path(path), edits):
+            self._refresh_controls()
+            self._update_title()
+
     def _info_row(self, parent, title: str = "", value: str = ""):
         group = QVBoxLayout()
         group.setSpacing(3)
@@ -350,11 +446,13 @@ class MainWindow(QMainWindow):
         self.workflow_heading.setObjectName("SectionTitle")
         layout.addWidget(self.workflow_heading)
         self.steps = []
+        self.step_bullets = []
         for i in range(5):
             row = QHBoxLayout()
             bullet = QLabel("●" if i == 0 else "○")
             bullet.setStyleSheet("color:#FACC15" if i == 0 else "color:#696E77")
             row.addWidget(bullet)
+            self.step_bullets.append(bullet)
             label = QLabel()
             label.setObjectName("Muted")
             row.addWidget(label, stretch=1)
@@ -399,6 +497,11 @@ class MainWindow(QMainWindow):
         action(self.view_menu, "actual", self._actual, "Ctrl+1")
         action(self.view_menu, "zoom_in", lambda: self.canvas.zoom(1.15), "Ctrl++")
         action(self.view_menu, "zoom_out", lambda: self.canvas.zoom(1 / 1.15), "Ctrl+-")
+        self.view_menu.addSeparator()
+        for key, shortcut in (("select","V"),("mask","B"),("erase","E"),("crop","C")):
+            action(self.view_menu,key,lambda checked=False, tool=key: self._select_tool(tool),shortcut)
+        action(self.view_menu,"brush_smaller",lambda: self.brush_slider.setValue(self.brush_slider.value()-5),"[")
+        action(self.view_menu,"brush_larger",lambda: self.brush_slider.setValue(self.brush_slider.value()+5),"]")
 
     def _fit(self):
         self.canvas.fit_photo()
@@ -466,7 +569,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(self.t("no_new_images"), 6000)
         return added
 
-    def _capture_view(self):
+    def _capture_view(self, *, finish_stroke=True):
+        if finish_stroke:
+            self.canvas._finish_stroke()
         if self.canvas.view_dirty and self.canvas.current_path and Path(self.canvas.current_path) == self.workspace.selected:
             self.workspace.views[self.workspace.selected] = self.canvas.view_state()
             self.canvas.view_dirty = False
@@ -481,6 +586,7 @@ class MainWindow(QMainWindow):
         self.setWindowModified(self.workspace.dirty)
 
     def _present_workspace(self):
+        self.canvas.set_crop_ratio(self.workspace.output_width/self.workspace.output_height)
         self.thumbnails.blockSignals(True)
         try:
             self.thumbnails.clear()
@@ -501,6 +607,7 @@ class MainWindow(QMainWindow):
         else:
             self.canvas.clear_photo()
             self.stack.setCurrentWidget(self.empty)
+            self._select_tool("select")
         self.retranslate()
 
     def select_photo(self, index: int):
@@ -520,6 +627,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(self.t("loading_photo"))
 
     def _photo_loaded(self, path, success):
+        if success:
+            self.canvas.set_crop_ratio(self.workspace.output_width/self.workspace.output_height)
+            self.canvas.set_edits(self.workspace.edits.get(Path(path), PhotoEdits()))
         self._refresh_controls()
         self.statusBar().showMessage(self.t("status_loaded", count=len(self.photos)) if success
                                      else self.t("invalid_image", path=Path(path).name))
@@ -548,7 +658,7 @@ class MainWindow(QMainWindow):
     def new_workspace(self):
         if not self._confirm_discard():
             return
-        self.workspace = Workspace()
+        self.workspace = Workspace(output_width=self.settings.output_width, output_height=self.settings.output_height)
         self.session_path = None
         self._present_workspace()
 
@@ -623,7 +733,7 @@ class MainWindow(QMainWindow):
         self.photo_label.setText(photo.path.name)
         self.filename_value.setText(photo.path.name)
         self.source_value.setText(f"{photo.width} × {photo.height} px")
-        self.export_value.setText(f"{self.settings.output_width} × {self.settings.output_height} px")
+        self.export_value.setText(f"{self.workspace.output_width} × {self.workspace.output_height} px")
 
     def _refresh_controls(self):
         enabled = self.canvas.has_photo
@@ -633,6 +743,18 @@ class MainWindow(QMainWindow):
         self.previous_button.setEnabled(index > 0)
         self.next_button.setEnabled(0 <= index < len(self.photos) - 1)
         self.remove_button.setEnabled(index >= 0)
+        for tool in ("mask","erase","crop"):
+            self.tools[tool].setEnabled(enabled)
+        self.tool_options.setEnabled(enabled)
+        edits = self.workspace.edits.get(self.workspace.selected,PhotoEdits())
+        for step_index, bullet in enumerate(self.step_bullets):
+            ready = bool(self.photos) if step_index == 0 else edits.crop is not None if step_index == 2 else False
+            bullet.setText("●" if ready else "○")
+            bullet.setStyleSheet("color:#FACC15" if ready else "color:#696E77")
+        self.clear_mask_button.setEnabled(enabled and bool(edits.strokes))
+        self.clear_crop_button.setEnabled(enabled and edits.crop is not None)
+        self.reset_crop_button.setEnabled(enabled)
+        self.fit_crop_button.setEnabled(enabled)
         self.photo_position.setText(self.t("images_loaded", index=index + 1, total=len(self.photos)) if self.photos else "")
         if hasattr(self, "actions"):
             self.actions["undo"].setEnabled(self.workspace.can_undo)
@@ -640,13 +762,21 @@ class MainWindow(QMainWindow):
             self.actions["remove_photo"].setEnabled(index >= 0)
             self.actions["previous_photo"].setEnabled(index > 0)
             self.actions["next_photo"].setEnabled(0 <= index < len(self.photos) - 1)
-            for key in ("fit", "actual", "zoom_in", "zoom_out"):
+            for key in ("fit", "actual", "zoom_in", "zoom_out", "mask", "erase", "crop", "brush_smaller", "brush_larger"):
                 self.actions[key].setEnabled(enabled)
 
     def open_settings(self):
-        dialog = PreferencesDialog(self.settings, self)
-        dialog.applied.connect(self.retranslate)
+        dialog = PreferencesDialog(self.settings, self, dimensions=(self.workspace.output_width,self.workspace.output_height))
+        dialog.applied.connect(self._preferences_applied)
         dialog.exec()
+
+    def _preferences_applied(self):
+        self._capture_view()
+        self.workspace.set_output_size(self.settings.output_width,self.settings.output_height)
+        self.canvas.set_crop_ratio(self.workspace.output_width/self.workspace.output_height)
+        if self.workspace.selected:
+            self.canvas.set_edits(self.workspace.edits.get(self.workspace.selected,PhotoEdits()))
+        self.retranslate()
 
     def retranslate(self):
         t = self.t
@@ -655,6 +785,17 @@ class MainWindow(QMainWindow):
         self.view_menu.setTitle(t("view_menu"))
         for key, action in self.actions.items():
             action.setText(t(key))
+        self.brush_label.setText(t("brush_size"))
+        self.brush_value.setText(t("brush_pixels",size=self.canvas.brush_size))
+        self.brush_slider.setAccessibleName(t("brush_size"))
+        self.show_mask.setText(t("show_mask"))
+        self.clear_mask_button.setText(t("clear_mask"))
+        self.mask_hint.setText(t("mask_controls_hint"))
+        self.crop_hint.setText(t("crop_controls_hint"))
+        self.reset_crop_button.setText(t("reset_crop"))
+        self.fit_crop_button.setText(t("fit_crop_view"))
+        self.clear_crop_button.setText(t("clear_crop"))
+        self._crop_info_changed()
         self.previous_button.setToolTip(t("previous_photo"))
         self.previous_button.setAccessibleName(t("previous_photo"))
         self.next_button.setToolTip(t("next_photo"))
@@ -673,7 +814,7 @@ class MainWindow(QMainWindow):
         self.zoom_in_button.setToolTip(t("zoom_in"))
         self.zoom_out_button.setToolTip(t("zoom_out"))
         for key, button in self.tools.items():
-            button.setToolTip(t(key) + (" · " + t("coming_soon") if key != "select" else ""))
+            button.setToolTip(t(key) + (" · " + t("coming_soon") if key not in ("select","mask","erase","crop") else ""))
         self.empty.retranslate(t)
         self.strip_title.setText(f'{t("photos")}  ·  {len(self.photos)}')
         self.inspector_label.setText(t("inspect"))
@@ -687,6 +828,6 @@ class MainWindow(QMainWindow):
         self.note.setText(t("stage_ready"))
         self.filename_value.setText(self.photos[self.thumbnails.currentRow()].path.name if self.photos and self.thumbnails.currentRow() >= 0 else "—")
         self.source_value.setText("—" if not self.photos or self.thumbnails.currentRow() < 0 else f"{self.photos[self.thumbnails.currentRow()].width} × {self.photos[self.thumbnails.currentRow()].height} px")
-        self.export_value.setText(f"{self.settings.output_width} × {self.settings.output_height} px")
+        self.export_value.setText(f"{self.workspace.output_width} × {self.workspace.output_height} px")
         self.statusBar().showMessage(t("loading_photo") if self.canvas.loading else t("status_loaded", count=len(self.photos)) if self.photos else t("status_empty"))
         self._refresh_controls()

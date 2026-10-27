@@ -1,10 +1,11 @@
 """Non-destructive workspace state and bounded collection history."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .models import Photo
+from .editing import PhotoEdits, fit_crop
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,8 @@ class Snapshot:
     photos: tuple[Photo, ...]
     selected: Path | None
     views: dict[Path, ViewState]
+    edits: dict[Path, PhotoEdits]
+    output_size: tuple[int, int]
 
 
 @dataclass
@@ -27,6 +30,9 @@ class Workspace:
     photos: list[Photo] = field(default_factory=list)
     selected: Path | None = None
     views: dict[Path, ViewState] = field(default_factory=dict)
+    edits: dict[Path, PhotoEdits] = field(default_factory=dict)
+    output_width: int = 1136
+    output_height: int = 710
     _undo: list[Snapshot] = field(default_factory=list, repr=False)
     _redo: list[Snapshot] = field(default_factory=list, repr=False)
     _saved: Snapshot | None = field(default=None, repr=False)
@@ -35,7 +41,7 @@ class Workspace:
         self.mark_saved()
 
     def snapshot(self) -> Snapshot:
-        return Snapshot(tuple(self.photos), self.selected, dict(self.views))
+        return Snapshot(tuple(self.photos), self.selected, dict(self.views), dict(self.edits), (self.output_width,self.output_height))
 
     def mark_saved(self) -> None:
         self._saved = self.snapshot()
@@ -74,6 +80,7 @@ class Workspace:
         self.photos.extend(added)
         for photo in added:
             self.views[photo.path] = ViewState()
+            self.edits[photo.path] = PhotoEdits()
         if self.selected is None:
             self.selected = added[0].path
         return len(added)
@@ -85,13 +92,36 @@ class Workspace:
         self._checkpoint()
         removed = self.photos.pop(index)
         self.views.pop(removed.path, None)
+        self.edits.pop(removed.path, None)
         self.selected = self.photos[min(index, len(self.photos) - 1)].path if self.photos else None
+        return True
+
+    def set_edits(self, path: Path, edits: PhotoEdits) -> bool:
+        if not any(p.path == path for p in self.photos) or self.edits.get(path, PhotoEdits()) == edits:
+            return False
+        self._checkpoint()
+        self.edits[path] = edits
+        return True
+
+    def set_output_size(self, width: int, height: int) -> bool:
+        if not (128 <= width <= 16000 and 128 <= height <= 16000):
+            raise ValueError('Unsupported output dimensions')
+        if (width, height) == (self.output_width, self.output_height):
+            return False
+        self._checkpoint()
+        self.output_width, self.output_height = width, height
+        for photo in self.photos:
+            edits = self.edits.get(photo.path, PhotoEdits())
+            if edits.crop is not None:
+                self.edits[photo.path] = replace(edits, crop=fit_crop(photo.width,photo.height,width/height,edits.crop))
         return True
 
     def _restore(self, snapshot: Snapshot) -> None:
         self.photos = list(snapshot.photos)
         self.selected = snapshot.selected
         self.views = dict(snapshot.views)
+        self.edits = dict(snapshot.edits)
+        self.output_width, self.output_height = snapshot.output_size
 
     def undo(self) -> bool:
         if not self._undo:
