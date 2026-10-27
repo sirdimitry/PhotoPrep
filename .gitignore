@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.env
+.env.*
+# macOS
+.DS_Store
+.AppleDouble
+# Builds
+build/
+dist/
+*.dmg
+*.icns
+*.spec
+# Local app data / model files (never upload gigabytes of checkpoints)
+models/
+*.safetensors
+*.ckpt
+*.pth
+*.pt
+*.onnx

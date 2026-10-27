@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "photoprep"
+version = "0.1.0a1"
+description = "A small, local-first photo preparation workspace for macOS"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "sirdimitry"}]
+dependencies = ["PySide6>=6.8,<7"]
+keywords = ["photos", "image editor", "crop", "inpainting", "macos"]
+classifiers = ["Programming Language :: Python :: 3", "Operating System :: MacOS :: MacOS X"]
+
+[project.scripts]
+photoprep = "photoprep.main:main"
+
+[tool.setuptools]
+packages = ["photoprep", "photoprep.ui"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "Pillow>=10", "pyinstaller>=6"]
