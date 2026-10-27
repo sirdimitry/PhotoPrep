@@ -155,28 +155,44 @@ def test_brush_eraser_undo_and_source_integrity(window,photo):
     assert hashlib.sha256(photo.path.read_bytes()).hexdigest()==digest
 
 
-def test_drag_crop_keeps_ratio_and_is_undoable(window,photo):
+def test_fixed_frame_stays_put_while_photo_zooms_and_moves(window,photo):
     window.import_paths([str(photo.path)])
     wait_for(lambda:not window.canvas.loading)
     window._select_tool('crop')
-    rect=window.canvas._crop_overlay.crop.pixels(400,300)
-    drag(window.canvas,(rect.right(),rect.bottom()),(rect.right()-90,rect.bottom()-60))
+    frame=window.canvas.crop_frame_rect
+    window.canvas.zoom(2)
     crop=window.workspace.edits[photo.path].crop
-    assert crop is not None
-    assert crop.width<1
+    assert crop is not None and crop.width<1
+    assert window.canvas.crop_frame_rect==frame
     assert crop.pixels(400,300).width()/crop.pixels(400,300).height()==pytest.approx(1136/710)
-    center=crop.pixels(400,300).center()
-    drag(window.canvas,(center.x(),center.y()),(center.x()+1000,center.y()+1000))
+    viewport=window.canvas.viewport()
+    start=frame.center().toPoint()
+    end=start+window.canvas.mapFromScene(QPointF(100,100))-window.canvas.mapFromScene(QPointF(0,0))
+    QTest.mousePress(viewport,Qt.MouseButton.LeftButton,pos=start)
+    QTest.mouseMove(viewport,end)
+    QTest.mouseRelease(viewport,Qt.MouseButton.LeftButton,pos=end)
     moved=window.workspace.edits[photo.path].crop
+    assert moved!=crop
     assert moved.x+moved.width<=1.000001 and moved.y+moved.height<=1.000001
+    assert window.canvas.crop_frame_rect==frame
+    assert (window.workspace.output_width,window.workspace.output_height)==(1136,710)
+    window.canvas.reset_crop()
+    centered=window.workspace.edits[photo.path].crop
+    assert centered.width==moved.width and centered.height==moved.height
+    assert centered.x+centered.width/2==pytest.approx(.5)
+    assert centered.y+centered.height/2==pytest.approx(.5)
+    window.undo()
+    wait_for(lambda:not window.canvas.loading)
+    assert window.workspace.edits[photo.path].crop==moved
     window.undo()
     wait_for(lambda:not window.canvas.loading)
     assert window.workspace.edits[photo.path].crop==crop
+    window.canvas.fit_crop_view()
+    assert window.canvas.crop_frame_rect==frame
+    assert window.workspace.edits[photo.path].crop.width==pytest.approx(1)
     window.canvas.clear_crop()
     assert window.workspace.edits[photo.path].crop is None
-    window.undo()
-    wait_for(lambda:not window.canvas.loading)
-    assert window.workspace.edits[photo.path].crop==crop
+    assert window.canvas.crop_frame_rect==frame
 
 
 def test_settings_size_change_adapts_crop_and_undo_restores(window,photo):
@@ -219,3 +235,18 @@ def test_mask_belongs_to_its_photo_and_space_pan_is_temporary(window,photo,tmp_p
     assert window.open_session_file(tmp_path/'mask.photoprep.json')
     wait_for(lambda:not window.canvas.loading)
     assert len(window.canvas.edits.strokes)==1
+
+
+def test_leaving_fixed_crop_restores_normal_view_without_an_extra_edit(window,photo):
+    window.import_paths([str(photo.path)])
+    wait_for(lambda:not window.canvas.loading)
+    before=window.canvas.view_state()
+    window._select_tool('crop')
+    window.canvas.zoom(2)
+    planned=window.workspace.edits[photo.path]
+    history_size=len(window.workspace._undo)
+    window._select_tool('mask')
+    assert window.canvas.view_state()==before
+    assert window.workspace.edits[photo.path]==planned
+    assert len(window.workspace._undo)==history_size
+    assert window.canvas._auto_fit

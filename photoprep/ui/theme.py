@@ -9,11 +9,11 @@ QWidget#ToolRail { background: #24262A; border-right: 1px solid #373A40; }
 QWidget#Inspector { background: #24262A; border-left: 1px solid #383B41; }
 QWidget#FilmstripPanel { background: #222428; border-top: 1px solid #363940; }
 QWidget#Workspace { background: #14161A; }
-QStackedWidget#ToolOptions { background: #24262A; border-bottom: 1px solid #373A40; }
+QStackedWidget#ToolOptions, QStackedWidget#ToolOptions > QWidget { background: transparent; border: none; }
 QSlider::groove:horizontal { height: 4px; background: #4B5059; border-radius: 2px; }
 QSlider::handle:horizontal { background: #FACC15; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; }
 QWidget#ImageBar { background: #1F2126; border-bottom: 1px solid #363940; }
-QLabel#BrandName { font-size: 19px; font-weight: 750; letter-spacing: -0.4px; }
+QLabel#BrandName { font-size: 17px; font-weight: 750; letter-spacing: -0.4px; }
 QLabel#SmallHint { color: #888D97; font-size: 11px; }
 QLabel#SectionTitle { color: #F2F3F5; font-size: 12px; font-weight: 700; }
 QLabel#Muted { color: #9DA2AC; }
@@ -25,13 +25,15 @@ QPushButton, QToolButton { background: #30343A; color: #E6E9EC; border: 1px soli
 QPushButton:hover, QToolButton:hover { background: #40454D; border-color: #555B65; }
 QPushButton:pressed, QToolButton:pressed { background: #4A505B; }
 QPushButton:disabled, QToolButton:disabled { color: #6F737C; background: #292C31; border-color: #33363B; }
+QPushButton[compact="true"], QToolButton#CompactAction { min-height: 0; padding: 3px 7px; border-radius: 5px; font-size: 12px; }
+QLabel#HeaderPhotoName { font-size: 12px; font-weight: 600; color: #C6CAD1; }
 QPushButton#Primary { color: #1A1C20; background: #FACC15; border: 1px solid #FACC15; font-weight: 750; }
 QPushButton#Primary:hover { background: #FBDC3E; }
 QPushButton#Primary:disabled { background: #585136; color: #8A8160; border-color: #585136; }
-QToolButton#RailButton { min-width: 34px; max-width: 34px; min-height: 34px; max-height: 34px; padding: 3px; border: 0; background: transparent; }
+QToolButton#RailButton { min-width: 28px; max-width: 28px; min-height: 28px; max-height: 28px; padding: 3px; border: 0; background: transparent; }
 QToolButton#RailButton:hover { background: #3B3F46; }
 QToolButton#RailButton:checked { background: #48432B; border-left: 3px solid #FACC15; }
-QToolButton#HeaderButton { background: transparent; border: 0; padding: 7px; }
+QToolButton#HeaderButton { background: transparent; border: 0; padding: 4px; }
 QToolButton#HeaderButton:hover { background: #373B41; }
 QListWidget { background: transparent; border: 0; outline: none; }
 QListWidget::item { border-radius: 8px; background: #2B2E34; border: 2px solid transparent; padding: 5px; margin: 2px; }

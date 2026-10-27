@@ -23,7 +23,7 @@ if target.exists():
     shutil.rmtree(target)
 (target / "icons").mkdir(parents=True)
 names = ("files", "folder", "export", "settings", "move", "brush", "eraser",
-         "crop", "logo", "compare", "info", "zoom-in", "zoom-out", "close", "chevron")
+         "crop", "logo", "compare", "info", "zoom-in", "zoom-out", "close", "chevron", "fit")
 paths = [Path("app-icon.png"), *(Path("icons") / (name + ".png") for name in names)]
 for relative in paths:
     source = root / "assets" / relative

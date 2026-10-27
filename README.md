@@ -37,7 +37,7 @@
 | Paint and erase a mask, preview it over the photo | ✅ Available now |
 | Local-only AI logo removal, change pixels only inside mask | 🛠 Planned |
 | Select and download compatible compact AI models | 🛠 Planned |
-| Fixed-ratio crop plan, draggable frame/corners and fit frame in view | ✅ Saved with workspace; export pending |
+| Fixed output frame; pan/zoom the photo underneath, fill and center controls | ✅ Saved with workspace; export pending |
 | Add a remembered user logo | 🛠 Planned |
 | Batch JPEG / PNG export, remove EXIF and other metadata | 🛠 Planned |
 
@@ -79,6 +79,8 @@ Requires **Python 3.11+** and installs **PySide6**. The application does not dow
 
 Workspace files (`.photoprep.json`) store local image paths and viewing positions, not image copies. Missing sources are reported when reopening; removing a photo from the workspace keeps its original file. Workspace history covers adding/removing photos, mask strokes, crop plans and output dimensions. Originals remain read-only. New workspaces use session format 2; format 1 workspaces still open, while older app versions cannot open format 2.
 
+Tool controls live in the existing inspector, zoom controls sit above the filmstrip, and a shortened photo filename appears beside the app name. Switching tools does not reduce the photo viewport. The output frame stays fixed: drag the photo and scroll to zoom it beneath the frame; output dimensions change only in Settings.
+
 Masks are preparation for the later AI stage. Crop frames are saved plans; this alpha does not write cropped images. Settings use two language buttons with immediate dialog translation and padded numeric fields.
 
 ### Roadmap
@@ -86,7 +88,7 @@ Masks are preparation for the later AI stage. Crop frames are saved plans; this 
 - **Stage 0** — brand identity, app icon, GitHub banner.
 - **Stage 1** — desktop UI, photo import/preview, thumbnails, preferences, bilingual interface. Complete.
 - **Stage 2** — workspace sessions, collection history, background photo decoding and bounded cache. Complete.
-- **Stage 3** — mask painting, eraser, fixed-ratio crop plans and edit history. **Current**.
+- **Stage 3** — mask painting, eraser, fixed output frame and edit history. **Current**.
 - **Stage 4** — LaMa-based local inpainting; preview and masked-only compositing.
 - **Stage 5** — curated model catalog and validated downloads from Hugging Face.
 - **Stage 6** — new logo placement, optimized batch output and metadata stripping.

@@ -2,28 +2,27 @@
 
 ## v0.1.0-alpha.4 — 2026-10-27
 
-Stage 3 begins with mask/crop plans and fixes the macOS settings layout.
+Stage 3: mask tools, a fixed output frame and compact controls.
 
-- Replace the clipped native language popup with two separate language buttons.
-  Translate the whole dialog immediately, retaining Save/Cancel semantics.
-- Use padded, right-aligned validated dimension fields; localize all labels and
-  buttons consistently and retain output dimensions in each workspace.
-- Add a mask brush and eraser with size control, visible cursor, colored overlay,
-  clear/show controls and temporary Space-to-pan.
-- Add a fixed-output-ratio crop frame with corner resizing, dragging, thirds grid,
-  reset/clear and fit-in-view controls. Output-size changes adapt frames atomically.
-- Undo/redo mask gestures, crop changes, clearing and output-size changes without
-  altering original images.
-- Store normalized mask/crop plans and output size in session format 2; retain
-  read compatibility for format 1. Older app versions cannot open format 2.
+- Fix macOS Preferences with separate language choices, complete immediate
+  translation, validated numeric fields and visible inner padding.
+- Move tool options into the existing inspector and zoom controls above the
+  filmstrip. Remove both toolbars above the image; switching tools preserves
+  the full viewport height. Compact buttons and the top header; show a shortened
+  two-word photo filename with the full name on hover.
+- Paint/erase per-photo masks, change brush size, show/clear overlays and pan
+  temporarily with Space. Keep original files read-only.
+- Keep the output frame fixed in the viewport. Drag and zoom the photograph
+  underneath it; preserve the output dimensions, constrain the image to fill
+  the frame, and provide compact Fill/Center controls.
+- Undo/redo mask gestures, crop positioning/zoom, clearing and output-size changes.
+- Store normalized mask/crop plans and output dimensions in session format 2.
+  Format 1 remains readable; older app versions cannot open format 2.
 
-Validation: 41 tests passed offscreen and in a macOS GUI session with existing
-Python/PySide6 dependencies. Tests cover the settings layout, mask/eraser pixels,
-source integrity, crop bounds/ratio, edit history, session round trips and malformed
-geometry. Packaged code was also checked in an isolated app copy: Russian/English
-settings, padded dimensions, brush/eraser gestures, corner resizing, Cmd+Z/Shift+Cmd+Z
-and Cmd+S. Its application payload matched the release bundle. AI inference and
-image export remain unavailable.
+Validation: 43 tests passed offscreen and in a macOS GUI session with existing
+Python/PySide6 dependencies. Tests cover bilingual layout, unchanged viewport
+height, fixed-frame pan/zoom, mask precision, source integrity, history and sessions.
+AI inference and image export remain unavailable.
 
 ## v0.1.0-alpha.3 — 2026-10-27
 
