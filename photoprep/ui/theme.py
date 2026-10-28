@@ -6,7 +6,7 @@ QLabel { background: transparent; }
 QMainWindow { background: #1C1E22; }
 QWidget#Header { background: #25272B; border-bottom: 1px solid #373A40; }
 QWidget#ToolRail { background: #24262A; border-right: 1px solid #373A40; }
-QWidget#Inspector { background: #24262A; border-left: 1px solid #383B41; }
+QWidget#Inspector, QWidget#InspectorShell { background: #24262A; border-left: 1px solid #383B41; }
 QWidget#FilmstripPanel { background: #222428; border-top: 1px solid #363940; }
 QWidget#Workspace { background: #14161A; }
 QStackedWidget#ToolOptions, QStackedWidget#ToolOptions > QWidget { background: transparent; border: none; }

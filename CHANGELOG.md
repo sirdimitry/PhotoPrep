@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.1.0-alpha.10 — 2026-10-28
+
+Stage 6: PNG branding and clean, non-destructive image export.
+
+- Add output-relative PNG logo placement, live dragging, size/opacity, anchors,
+  last-logo reuse and atomic apply-to-all history in the existing inspector.
+- Save logo plans and relative paths in session format 5; read formats 1–4.
+- Export current/all photos to JPEG or PNG at exact crop-frame dimensions,
+  restore per-model retouch plans and normalize colour to sRGB.
+- Use fresh encoders to remove source EXIF/GPS, XMP, comments, profiles and text.
+  JPEG flattens transparency on white; PNG preserves alpha.
+- Run sequential cancellable batches, reuse one logo/model, avoid extra pixel
+  copies, protect source signatures and commit files atomically without replacing
+  existing names. Keep completed files and clean own temporary files on cancel.
+- Fix Qt shutdown ownership: disconnect closed export dialogs, remove a graphics
+  ownership cycle, and dispose windows before Python finalizes. Regression coverage
+  verifies normal process exit after repeated dialog and logo lifecycles.
+
+Validation: 88 tests passed offscreen and with native macOS rendering, both with
+exit status 0 and no Qt teardown warnings. Real mixed-model/logo export matched
+compositor pixels; a 20-image JPEG batch and real PNG cancellation passed.
+Metadata removal, EXIF orientation, logo alpha, name collisions, source integrity,
+missing files, disk-full cleanup and session portability were verified. No new
+Python or libraries were installed; existing Pillow is now a runtime dependency.
+
 ## v0.1.0-alpha.9 — 2026-10-28
 
 - Report first-use download failures as model-download errors, including the

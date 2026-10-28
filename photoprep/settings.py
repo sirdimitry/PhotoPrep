@@ -66,3 +66,32 @@ class Preferences:
         from .catalog import get_model
         get_model(value)
         self._q.setValue('ai/model',value)
+
+    @property
+    def logo_path(self):
+        value=self._q.value('branding/logo_path','')
+        return value if isinstance(value,str) else ''
+
+    @logo_path.setter
+    def logo_path(self,value):
+        self._q.setValue('branding/logo_path',str(value))
+
+    @property
+    def export_format(self):
+        value=self._q.value('export/format','JPEG')
+        return value if value in ('JPEG','PNG') else 'JPEG'
+
+    @export_format.setter
+    def export_format(self,value):
+        if value not in ('JPEG','PNG'):raise ValueError('Invalid format')
+        self._q.setValue('export/format',value)
+
+    @property
+    def export_quality(self):
+        try:value=int(self._q.value('export/quality',90))
+        except (TypeError,ValueError):return 90
+        return value if 1<=value<=100 else 90
+
+    @export_quality.setter
+    def export_quality(self,value):
+        self._q.setValue('export/quality',max(1,min(100,int(value))))

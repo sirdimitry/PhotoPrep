@@ -9,6 +9,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QIODevice, QSaveFile, QFileDevice
 
+from .branding import LogoPlacement
 from .catalog import MODELS
 from .models import Photo
 from .editing import PhotoEdits, MaskStroke, CropRect, fit_crop
@@ -33,13 +34,18 @@ def save_session(path: Path, workspace: Workspace) -> None:
         raise SessionError("session_too_large")
     if any((edits.pass_models and len(edits.pass_models)!=len(edits.passes)) or any(model not in MODELS for model in edits.models_for_passes) for edits in workspace.edits.values()):
         raise SessionError("session_invalid")
+    def encode_edits(edits):
+        result=asdict(edits)
+        if edits.logo:
+            result['logo']['path']=relative(Path(edits.logo.path))
+        return result
     document = {
-        'format': 'PhotoPrep', 'version': 4 if any(any(model!='lama' for model in edits.models_for_passes) for edits in workspace.edits.values()) else 3 if any(edits.passes for edits in workspace.edits.values()) else 2,
+        'format': 'PhotoPrep', 'version': 5 if any(edits.logo for edits in workspace.edits.values()) else 4 if any(any(model!='lama' for model in edits.models_for_passes) for edits in workspace.edits.values()) else 3 if any(edits.passes for edits in workspace.edits.values()) else 2,
         'output_size': [workspace.output_width, workspace.output_height],
         'selected': relative(workspace.selected) if workspace.selected else None,
         'photos': [{'path': relative(photo.path),
                     'view': asdict(workspace.views.get(photo.path, ViewState())),
-                    'edits': asdict(workspace.edits.get(photo.path, PhotoEdits()))}
+                    'edits': encode_edits(workspace.edits.get(photo.path, PhotoEdits()))}
                    for photo in workspace.photos],
     }
     data = json.dumps(document, ensure_ascii=False, indent=2).encode('utf-8')
@@ -122,7 +128,16 @@ def _edits(value) -> PhotoEdits:
             raise ValueError()
         if any(not isinstance(model,str) or model not in MODELS for model in pass_models):
             raise ValueError()
-        return PhotoEdits(tuple(strokes),crop,passes,tuple(pass_models))
+        logo=None
+        if value.get('logo') is not None:
+            item=value['logo']
+            if not isinstance(item,dict) or not isinstance(item.get('path'),str) or not item['path'] or len(item['path'])>4096:
+                raise ValueError()
+            width,opacity,x,y=(float(item.get(key,default)) for key,default in (('width',.15),('opacity',1),('x',1),('y',1)))
+            if not all(math.isfinite(v) for v in (width,opacity,x,y)) or not .01<=width<=.94 or not 0<=opacity<=1 or not 0<=x<=1 or not 0<=y<=1 or not isinstance(item.get('enabled',True),bool):
+                raise ValueError()
+            logo=LogoPlacement(item['path'],width,opacity,x,y,item.get('enabled',True))
+        return PhotoEdits(tuple(strokes),crop,passes,tuple(pass_models),logo)
     except SessionError:
         raise
     except (TypeError,ValueError,KeyError,OverflowError) as exc:
@@ -141,7 +156,7 @@ def load_session(path: Path) -> tuple[Workspace, int]:
     except (ValueError, UnicodeError, RecursionError) as exc:
         raise SessionError('session_invalid') from exc
     if (not isinstance(document, dict) or document.get('format') != 'PhotoPrep'
-            or type(document.get('version')) is not int or document['version'] not in (1,2,3,4)
+            or type(document.get('version')) is not int or document['version'] not in (1,2,3,4,5)
             or not isinstance(document.get('photos'), list)):
         raise SessionError('session_invalid')
     if len(document['photos']) > MAX_PHOTOS:
@@ -175,6 +190,8 @@ def load_session(path: Path) -> tuple[Workspace, int]:
             raise SessionError('session_too_large')
         if edits.crop is not None:
             edits = replace(edits,crop=fit_crop(photo.width,photo.height,workspace.output_width/workspace.output_height,edits.crop))
+        if edits.logo:
+            edits=replace(edits,logo=replace(edits.logo,path=str((path.parent/edits.logo.path).resolve())))
         workspace.edits[photo.path] = edits
     selected = document.get('selected')
     try:

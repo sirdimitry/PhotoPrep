@@ -155,7 +155,9 @@ def inpaint(source, mask, predict):
     result[y:y+height,x:x+width,:3] = np.rint(fill*alpha+old*(1-alpha)).astype(np.uint8)
     # Alpha is never changed, including in transparent sources.
     assert np.array_equal(result[coverage==0],original[coverage==0])
-    return array_image(result)
+    output=array_image(result)
+    if source.colorSpace().isValid():output.setColorSpace(source.colorSpace())
+    return output
 
 
 def run_job(request_path):
@@ -182,28 +184,7 @@ def run_job(request_path):
         raise ValueError('inference_image_large')
     source = reader.read()
     progress('processing')
-    options = ort.SessionOptions()
-    options.intra_op_num_threads = min(4,os.cpu_count() or 1)
-    options.inter_op_num_threads = 1
-    options.add_session_config_entry('session.intra_op.allow_spinning','0')
-    options.log_severity_level = 3
-    session = None
-    session_id = None
-    def predictor(model_id):
-        nonlocal session,session_id
-        if session_id!=model_id:
-            session = None  # release the previous model before allocating another
-            session = ort.InferenceSession(str(paths[model_id]),sess_options=options,providers=['CPUExecutionProvider'])
-            session_id = model_id
-        def predict(image,mask):
-            if model_id=='migan':
-                import numpy as np
-                values = {'image':np.rint(image*255).astype(np.uint8),
-                          'mask':np.rint((1-mask)*255).astype(np.uint8)}
-            else:
-                values = {'image':image,'mask':mask}
-            return session.run(None,values)[0]
-        return predict
+    predictor = create_predictor(paths)
     from .editing import MaskStroke, render_mask
     result = source
     replay = request.get('replay',[])
@@ -234,6 +215,9 @@ def worker_main(arguments):
             download_model(path)
         elif command=='catalog':
             catalog_job(path)
+        elif command=='export':
+            from .exporting import export_job
+            export_job(path)
         elif command=='inpaint':
             run_job(path)
         else:
@@ -243,8 +227,9 @@ def worker_main(arguments):
         # Return only known user-facing codes; paths and native internals stay local.
         code = str(exc)
         allowed = {'model_download_error','model_integrity_error','empty_mask','inference_image_error',
-                   'inference_image_large','inference_output_error','unknown_model','model_busy'}
-        print(json.dumps({'error':code if code in allowed else 'model_download_error' if arguments and arguments[0]=='download' else 'inference_error'}),flush=True)
+                   'inference_image_large','inference_output_error','unknown_model','model_busy',
+                   'export_failed','export_pending_mask','export_size_large','export_source_changed','logo_invalid'}
+        print(json.dumps({'error':code if code in allowed else 'model_download_error' if arguments and arguments[0]=='download' else 'export_failed' if arguments and arguments[0]=='export' else 'inference_error'}),flush=True)
         return 1
 
 
@@ -309,3 +294,30 @@ def cleanup_download(path,pid):
             path.with_name(path.name+f'.{pid}.part').unlink(missing_ok=True)
         except OSError:
             pass
+
+
+def create_predictor(paths):
+    import onnxruntime as ort
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = min(4,os.cpu_count() or 1)
+    options.inter_op_num_threads = 1
+    options.add_session_config_entry('session.intra_op.allow_spinning','0')
+    options.log_severity_level = 3
+    session = None
+    session_id = None
+    def predictor(model_id):
+        nonlocal session,session_id
+        if session_id!=model_id:
+            session = None  # release the previous model before allocating another
+            session = ort.InferenceSession(str(paths[model_id]),sess_options=options,providers=['CPUExecutionProvider'])
+            session_id = model_id
+        def predict(image,mask):
+            if model_id=='migan':
+                import numpy as np
+                values = {'image':np.rint(image*255).astype(np.uint8),
+                          'mask':np.rint((1-mask)*255).astype(np.uint8)}
+            else:
+                values = {'image':image,'mask':mask}
+            return session.run(None,values)[0]
+        return predict
+    return predictor

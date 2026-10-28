@@ -13,7 +13,7 @@ from PySide6.QtGui import QIcon, QImageReader, QPixmap, QKeySequence, QAction
 from PySide6.QtWidgets import (
     QFrame, QFileDialog, QHBoxLayout, QLabel, QListView, QListWidget, QButtonGroup, QSlider, QCheckBox,
     QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QSizePolicy,
-    QSplitter, QStackedWidget, QToolButton, QVBoxLayout, QWidget,
+    QSplitter, QStackedWidget, QToolButton, QVBoxLayout, QWidget, QScrollArea,
 )
 
 from .. import __version__
@@ -22,6 +22,7 @@ from ..models import Photo, list_folder_images
 from ..settings import Preferences
 from ..workspace import Workspace, ViewState
 from ..editing import PhotoEdits, render_mask
+from ..branding import LogoPlacement, read_logo
 from ..session import load_session, save_session, SessionError
 from .assets import app_icon_path, icon_path, ui_icon
 from .editor import EditorCanvas as PhotoCanvas
@@ -30,6 +31,7 @@ from .theme import stylesheet
 from .filmstrip import FilmstripDelegate
 from .widgets import PhotoNameLabel
 from .ai_controller import AIController
+from .export_dialog import ExportDialog
 from ..inference import model_path
 from ..catalog import get_model
 
@@ -112,6 +114,8 @@ class MainWindow(QMainWindow):
         self.ai.cancelled.connect(self._ai_cancelled)
         self._ai_stage = None
         self._ai_percent = 0
+        self._after_view=False
+        self._export_dialog=None
         self.setWindowTitle("PhotoPrep")
         self.setWindowIcon(QIcon(app_icon_path()))
         self.setStyleSheet(stylesheet(self.settings.appearance))
@@ -192,6 +196,7 @@ class MainWindow(QMainWindow):
         self.export_button.setObjectName("Primary")
         self.export_button.setIcon(QIcon(icon_path("export")))
         self.export_button.setEnabled(False)
+        self.export_button.clicked.connect(self.open_export)
         layout.addWidget(self.export_button)
         self.settings_button = self._tool_button("settings")
         self.settings_button.clicked.connect(self.open_settings)
@@ -228,7 +233,7 @@ class MainWindow(QMainWindow):
                           ("crop", "crop"), ("logo", "logo"), ("compare", "compare")]:
             button = self._tool_button(icon, rail=True)
             button.setToolTip(key)
-            if key in ("select", "mask", "erase", "crop"):
+            if key in ("select", "mask", "erase", "crop", "logo"):
                 button.setCheckable(True)
                 self.tool_group.addButton(button)
                 button.setChecked(key == "select")
@@ -237,7 +242,7 @@ class MainWindow(QMainWindow):
             self.tools[key] = button
             layout.addWidget(button)
         layout.addStretch(1)
-        self.tools["compare"].clicked.connect(lambda:self._show_preview(not self.canvas._preview_active))
+        self.tools["compare"].clicked.connect(lambda:self._compare_view(not self._after_view))
         self.rail_info = self._tool_button("info", rail=True)
         self.rail_info.setEnabled(False)
         layout.addWidget(self.rail_info)
@@ -393,6 +398,7 @@ class MainWindow(QMainWindow):
         self.clear_crop_button=QToolButton(crop)
         self.clear_crop_button.hide()
         options.addWidget(crop)
+        options.addWidget(self._build_logo_options())
         options.setVisible(False)
         return options
 
@@ -406,7 +412,9 @@ class MainWindow(QMainWindow):
         self.canvas.set_tool(tool)
         if tool in ("mask","erase"):
             self._show_preview(self._current_preview() is not None)
-        self.tool_options.setCurrentIndex(1 if tool=="crop" else 0)
+        if tool in ("logo","crop","select") and self._has_logo():
+            self._show_preview(True)
+        self.tool_options.setCurrentIndex(2 if tool=="logo" else 1 if tool=="crop" else 0)
         self.tool_options.setVisible(tool!="select")
         self.tool_heading.setText(self.t(tool))
         self._refresh_controls()
@@ -443,10 +451,16 @@ class MainWindow(QMainWindow):
 
     def _build_inspector(self):
         panel = QWidget()
-        panel.setObjectName("Inspector")
+        panel.setObjectName("InspectorShell")
         panel.setMinimumWidth(242)
         panel.setMaximumWidth(340)
-        layout = QVBoxLayout(panel)
+        outer=QVBoxLayout(panel);outer.setContentsMargins(0,0,0,0)
+        scroll=QScrollArea();scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        content=QWidget();content.setObjectName('Inspector')
+        content.setStyleSheet('QWidget#Inspector { border-left: 0; }')
+        scroll.setWidget(content);outer.addWidget(scroll)
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(18, 18, 18, 14)
         layout.setSpacing(14)
         self.inspector_label = QLabel()
@@ -493,7 +507,7 @@ class MainWindow(QMainWindow):
             button.setFixedHeight(28)
             button.setCheckable(True)
             self.compare_group.addButton(button)
-            button.toggled.connect(lambda checked,result=after:self._show_preview(result) if checked else None)
+            button.toggled.connect(lambda checked,result=after:self._compare_view(result) if checked else None)
             compare_row.addWidget(button)
         self.before_button.setChecked(True)
         layout.addLayout(compare_row)
@@ -507,6 +521,106 @@ class MainWindow(QMainWindow):
         self.note.setObjectName("SmallHint")
         layout.addWidget(self.note)
         return panel
+
+    def _build_logo_options(self):
+        panel=QWidget();layout=QVBoxLayout(panel);layout.setContentsMargins(0,0,0,0);layout.setSpacing(8)
+        row=QHBoxLayout();row.setSpacing(6)
+        self.logo_choose=QPushButton();self.logo_last=QPushButton()
+        for button in (self.logo_choose,self.logo_last):
+            button.setProperty('compact',True);button.setFixedHeight(28);row.addWidget(button)
+        self.logo_choose.clicked.connect(self._choose_logo);self.logo_last.clicked.connect(self._use_last_logo)
+        self.logo_remove=self._compact_tool_button('close',lambda:self._set_logo(None));self.logo_remove.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.logo_remove.setFixedSize(28,28);row.addWidget(self.logo_remove);layout.addLayout(row)
+        self.logo_name=PhotoNameLabel();self.logo_name.setObjectName('SmallHint');layout.addWidget(self.logo_name)
+        for key,low,high in (('size',1,94),('opacity',0,100)):
+            row=QHBoxLayout();row.setSpacing(4)
+            label=QLabel();label.setFixedWidth(72)
+            slider=QSlider(Qt.Orientation.Horizontal);slider.setRange(low,high);slider.setTracking(False);slider.setMinimumWidth(50);slider.setMaximumWidth(110)
+            value=QLabel();value.setFixedWidth(34);value.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
+            setattr(self,'logo_'+key+'_label',label);setattr(self,'logo_'+key,slider);setattr(self,'logo_'+key+'_value',value)
+            slider.valueChanged.connect(lambda number,field=key:self._logo_adjust(field,number))
+            row.addWidget(label);row.addWidget(slider,stretch=1);row.addWidget(value);layout.addLayout(row)
+        row=QHBoxLayout();row.setSpacing(4);self.logo_positions=[]
+        for symbol,key,x,y in (('↖','logo_tl',0,0),('↗','logo_tr',1,0),('⊙','logo_center',.5,.5),('↙','logo_bl',0,1),('↘','logo_br',1,1)):
+            button=QToolButton();button.setText(symbol);button.setObjectName('CompactAction');button.setFixedSize(28,28)
+            button.clicked.connect(lambda checked=False,a=x,b=y:self._logo_position(a,b));row.addWidget(button);self.logo_positions.append((button,key))
+        row.addStretch(1);layout.addLayout(row)
+        row=QHBoxLayout();self.logo_enabled=QCheckBox();self.logo_enabled.toggled.connect(lambda checked:self._logo_adjust('enabled',checked));row.addWidget(self.logo_enabled)
+        self.logo_all=QPushButton();self.logo_all.setProperty('compact',True);self.logo_all.setFixedHeight(28);self.logo_all.clicked.connect(self._logo_apply_all);row.addWidget(self.logo_all);layout.addLayout(row)
+        self.logo_hint=QLabel();self.logo_hint.setWordWrap(True);self.logo_hint.setObjectName('SmallHint');layout.addWidget(self.logo_hint)
+        return panel
+
+    def _has_logo(self):
+        logo=self.workspace.edits.get(self.workspace.selected,PhotoEdits()).logo
+        return bool(logo and logo.enabled and logo.opacity>0 and self.canvas._logo_image is not None)
+
+    def _compare_view(self,after):
+        if not after and self.canvas.tool in ('mask','erase','logo'):
+            self._select_tool('select')
+        self._show_preview(after)
+
+    def _choose_logo(self):
+        path,_=QFileDialog.getOpenFileName(self,self.t('logo_choose_title'),self.settings.logo_path or str(Path.home()),'PNG (*.png)')
+        if path:self._apply_logo_path(path)
+
+    def _use_last_logo(self):
+        if self.settings.logo_path:self._apply_logo_path(self.settings.logo_path)
+
+    def _apply_logo_path(self,path):
+        if not self.canvas.has_photo or self.ai.busy:return
+        try:read_logo(path)
+        except (OSError,ValueError):
+            QMessageBox.warning(self,'PhotoPrep',self.t('logo_invalid'));return
+        path=str(Path(path).resolve());self.settings.logo_path=path
+        old=self.workspace.edits.get(self.workspace.selected,PhotoEdits()).logo
+        self._set_logo(replace(old,path=path,enabled=True) if old else LogoPlacement(path))
+
+    def _set_logo(self,logo):
+        if not self.canvas.has_photo or self.ai.busy:return
+        self._capture_view()
+        edits=replace(self.workspace.edits.get(self.workspace.selected,PhotoEdits()),logo=logo)
+        if self.workspace.set_edits(self.workspace.selected,edits):
+            self.canvas.set_edits(edits);self._update_title()
+        if logo:self._show_preview(True)
+        self._refresh_controls()
+
+    def _logo_adjust(self,field,value):
+        logo=self.workspace.edits.get(self.workspace.selected,PhotoEdits()).logo
+        if logo:
+            field='width' if field=='size' else field
+            self._set_logo(replace(logo,**{field:value if field=='enabled' else value/100}))
+
+    def _logo_position(self,x,y):
+        logo=self.workspace.edits.get(self.workspace.selected,PhotoEdits()).logo
+        if logo:self._set_logo(replace(logo,x=x,y=y))
+
+    def _logo_apply_all(self):
+        self._capture_view()
+        logo=self.workspace.edits.get(self.workspace.selected,PhotoEdits()).logo
+        if logo and self.workspace.set_logo_for_all(logo):
+            self._update_title();self._refresh_controls()
+
+    def _refresh_logo_controls(self,enabled):
+        logo=self.workspace.edits.get(self.workspace.selected,PhotoEdits()).logo
+        self.logo_choose.setEnabled(enabled)
+        self.logo_last.setEnabled(enabled and bool(self.settings.logo_path) and Path(self.settings.logo_path).is_file())
+        self.logo_remove.setEnabled(enabled and logo is not None)
+        self.logo_all.setEnabled(enabled and logo is not None)
+        self.logo_enabled.blockSignals(True);self.logo_enabled.setChecked(bool(logo and logo.enabled));self.logo_enabled.setEnabled(enabled and logo is not None);self.logo_enabled.blockSignals(False)
+        self.logo_name.set_filename(Path(logo.path).name if logo else self.t('logo_none'))
+        self.logo_name.setToolTip(logo.path if logo else '')
+        for field,number in (('size',round(logo.width*100) if logo else 15),('opacity',round(logo.opacity*100) if logo else 100)):
+            slider=getattr(self,'logo_'+field);slider.blockSignals(True);slider.setValue(number);slider.setEnabled(enabled and bool(logo and logo.enabled));slider.blockSignals(False)
+            getattr(self,'logo_'+field+'_value').setText(f'{number}%')
+        for button,key in self.logo_positions:button.setEnabled(enabled and bool(logo and logo.enabled))
+
+    def open_export(self):
+        if self.ai.busy or not self.canvas.has_photo:return
+        self._capture_view()
+        dialog=ExportDialog(self.workspace,self.settings,self)
+        self._export_dialog=dialog
+        dialog.exec()
+        self._export_dialog=None
 
     def _preview_key(self,edits=None):
         path = self.workspace.selected
@@ -529,14 +643,16 @@ class MainWindow(QMainWindow):
         if not hasattr(self,'before_button') or not self.canvas.has_photo:
             return
         image = self._current_preview() if after else None
-        if after and image is None:
+        if after and image is None and not self._has_logo():
             return
-        if not after and self._current_preview() is not None and self.canvas.tool in ('mask','erase'):
-            self._select_tool('select')
+        self._after_view=after
         self.canvas.set_preview(image)
+        self.canvas.set_logo_visible(after and self.canvas.tool not in ("mask","erase"))
         button = self.after_button if after else self.before_button
         if not button.isChecked():
+            button.blockSignals(True)
             button.setChecked(True)
+            button.blockSignals(False)
 
     def _process_mask(self):
         if self.ai.busy or not self.canvas.has_photo:
@@ -618,6 +734,7 @@ class MainWindow(QMainWindow):
             return item
         action(self.file_menu, "open_photos", self.open_photos, QKeySequence.StandardKey.Open)
         action(self.file_menu, "open_folder", self.open_folder, "Ctrl+Shift+O")
+        action(self.file_menu,"export",self.open_export,"Ctrl+Shift+E")
         self.file_menu.addSeparator()
         action(self.file_menu, "new_workspace", self.new_workspace, QKeySequence.StandardKey.New)
         action(self.file_menu, "open_workspace", self.open_workspace, "Ctrl+Alt+O")
@@ -636,7 +753,7 @@ class MainWindow(QMainWindow):
         action(self.view_menu, "zoom_in", lambda: self.canvas.zoom(1.15), "Ctrl++")
         action(self.view_menu, "zoom_out", lambda: self.canvas.zoom(1 / 1.15), "Ctrl+-")
         self.view_menu.addSeparator()
-        for key, shortcut in (("select","V"),("mask","B"),("erase","E"),("crop","C")):
+        for key, shortcut in (("select","V"),("mask","B"),("erase","E"),("crop","C"),("logo","L")):
             action(self.view_menu,key,lambda checked=False, tool=key: self._select_tool(tool),shortcut)
         action(self.view_menu,"brush_smaller",lambda: self.brush_slider.setValue(self.brush_slider.value()-5),"[")
         action(self.view_menu,"brush_larger",lambda: self.brush_slider.setValue(self.brush_slider.value()+5),"]")
@@ -773,7 +890,7 @@ class MainWindow(QMainWindow):
             self.canvas.set_output_dimensions(self.workspace.output_width,self.workspace.output_height)
             self.canvas.set_edits(self.workspace.edits.get(Path(path), PhotoEdits()))
         if success:
-            self._show_preview(self._current_preview() is not None)
+            self._show_preview(self._current_preview() is not None or self._has_logo())
         self._refresh_controls()
         self.statusBar().showMessage(self.t("status_loaded", count=len(self.photos)) if success
                                      else self.t("invalid_image", path=Path(path).name))
@@ -876,10 +993,15 @@ class MainWindow(QMainWindow):
             return self.save_workspace()
         return box.clickedButton() == discard
 
+    def shutdown(self):
+        self.ai.shutdown()
+        if self._export_dialog:self._export_dialog._shutdown()
+        self.canvas.clear_photo()
+        self.canvas._pool.waitForDone(5000)
+
     def closeEvent(self, event):
         if self._confirm_discard():
-            self.ai.shutdown()
-            self.canvas.clear_photo()
+            self.shutdown()
             event.accept()
         else:
             event.ignore()
@@ -897,19 +1019,22 @@ class MainWindow(QMainWindow):
         self.previous_button.setEnabled(index > 0 and not self.ai.busy)
         self.next_button.setEnabled(0 <= index < len(self.photos) - 1 and not self.ai.busy)
         self.remove_button.setEnabled(index >= 0 and not self.ai.busy)
-        for tool in ("mask","erase","crop"):
+        for tool in ("mask","erase","crop","logo"):
             self.tools[tool].setEnabled(enabled)
         self.tool_options.setEnabled(enabled)
         edits = self.workspace.edits.get(self.workspace.selected,PhotoEdits())
         preview = self._current_preview() is not None
-        self.tools['compare'].setEnabled(enabled and preview)
+        has_result=preview or self._has_logo()
+        self.tools['compare'].setEnabled(enabled and has_result)
+        self.export_button.setEnabled(enabled)
+        self._refresh_logo_controls(enabled)
         self.process_button.setEnabled(enabled and (bool(edits.strokes) or (bool(edits.passes) and not preview)))
         self.process_button.setText(self.t('ai_restore' if edits.passes and not preview and not edits.strokes else 'process_mask'))
         spec = get_model(self.settings.model_id)
         self.process_button.setToolTip(self.t('ai_download_hint',name=spec.name,size=f'{spec.size/1e6:.1f}') if not model_path(self.settings.model_id).is_file() else self.t('ai_model_active',name=spec.name))
         self.cancel_ai_button.setVisible(self.ai.busy)
-        self.before_button.setEnabled(enabled and preview)
-        self.after_button.setEnabled(enabled and preview)
+        self.before_button.setEnabled(enabled and has_result)
+        self.after_button.setEnabled(enabled and has_result)
         for widget in (self.thumbnails,self.open_files_button,self.open_folder_button,self.settings_button):
             widget.setEnabled(not self.ai.busy)
         if not self.ai.busy:
@@ -926,6 +1051,7 @@ class MainWindow(QMainWindow):
         self.fit_crop_button.setEnabled(enabled)
         self.photo_position.setText(self.t("images_loaded", index=index + 1, total=len(self.photos)) if self.photos else "")
         if hasattr(self, "actions"):
+            self.actions["export"].setEnabled(enabled)
             self.actions["undo"].setEnabled(self.workspace.can_undo and not self.ai.busy)
             self.actions["redo"].setEnabled(self.workspace.can_redo and not self.ai.busy)
             for key in ("open_photos","open_folder","new_workspace","open_workspace","save_workspace","save_workspace_as"):
@@ -933,7 +1059,7 @@ class MainWindow(QMainWindow):
             self.actions["remove_photo"].setEnabled(index >= 0 and not self.ai.busy)
             self.actions["previous_photo"].setEnabled(index > 0 and not self.ai.busy)
             self.actions["next_photo"].setEnabled(0 <= index < len(self.photos) - 1 and not self.ai.busy)
-            for key in ("fit", "actual", "zoom_in", "zoom_out", "mask", "erase", "crop", "brush_smaller", "brush_larger"):
+            for key in ("fit", "actual", "zoom_in", "zoom_out", "mask", "erase", "crop", "logo", "brush_smaller", "brush_larger"):
                 self.actions[key].setEnabled(enabled)
 
     def open_settings(self):
@@ -986,6 +1112,16 @@ class MainWindow(QMainWindow):
         self.fit_crop_button.setText(t("fill_crop_short"))
         self.fit_crop_button.setToolTip(t("fill_crop"))
         self.clear_crop_button.setText(t("clear_crop"))
+        self.logo_choose.setText(t('logo_choose'))
+        self.logo_last.setText(t('logo_last'))
+        self.logo_remove.setToolTip(t('logo_remove'))
+        self.logo_enabled.setText(t('logo_enabled'))
+        self.logo_all.setText(t('logo_all'))
+        self.logo_size_label.setText(t('logo_size'))
+        self.logo_opacity_label.setText(t('logo_opacity'))
+        self.logo_hint.setText(t('logo_hint'))
+        for button,key in self.logo_positions:
+            button.setToolTip(t(key));button.setAccessibleName(t(key))
         self._crop_info_changed()
         self.previous_button.setToolTip(t("previous_photo"))
         self.previous_button.setAccessibleName(t("previous_photo"))
@@ -997,7 +1133,7 @@ class MainWindow(QMainWindow):
         self.open_files_button.setText(t("open_photos"))
         self.open_folder_button.setText(t("open_folder"))
         self.export_button.setText(t("export"))
-        self.export_button.setToolTip(t("coming_soon"))
+        self.export_button.setToolTip(t("export_note"))
         self.settings_button.setToolTip(t("settings"))
         self.photo_label.set_filename(self.photos[self.thumbnails.currentRow()].path.name if self.photos and self.thumbnails.currentRow() >= 0 else "")
         self.fit_button.setText(t("fit"))
@@ -1005,7 +1141,7 @@ class MainWindow(QMainWindow):
         self.zoom_in_button.setToolTip(t("zoom_in"))
         self.zoom_out_button.setToolTip(t("zoom_out"))
         for key, button in self.tools.items():
-            button.setToolTip(t(key) + (" · " + t("coming_soon") if key not in ("select","mask","erase","crop","compare") else ""))
+            button.setToolTip(t(key) + (" · " + t("coming_soon") if key not in ("select","mask","erase","crop","logo","compare") else ""))
         self.empty.retranslate(t)
         self.strip_title.setText(f'{t("photos")}  ·  {len(self.photos)}')
         self.inspector_label.setText(t("inspect"))

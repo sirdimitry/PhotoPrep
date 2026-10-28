@@ -11,7 +11,7 @@
 ![PhotoPrep — AI cleanup, cropping, branding and batch workflows](assets/github-banner.png)
 
 <p align="center">
-  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.9-FACC15?style=flat-square&labelColor=202227">
+  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.10-FACC15?style=flat-square&labelColor=202227">
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-33373d?style=flat-square">
   <img alt="Language" src="https://img.shields.io/badge/UI-English%20%2B%20Русский-33373d?style=flat-square">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-33373d?style=flat-square"></a>
@@ -21,7 +21,7 @@
 
 **PhotoPrep** is a free, local-first photo preparation app for macOS. Its goal is to simplify repetitive website-image work: mask and remove unwanted logos with local inpainting models, crop to a consistent frame, optionally add your own brand mark, then export clean files without hidden metadata.
 
-**Current status: early alpha / Stage 5.** The present build is a **working desktop workspace**, with an initial local AI preview. Only the features marked *Available now* below are implemented. No external image upload is performed.
+**Current status: early alpha / Stage 6.** The present build is a **working desktop workspace**, with an initial local AI preview. Only the features marked *Available now* below are implemented. No external image upload is performed.
 
 ### Features
 
@@ -33,18 +33,18 @@
 | Dark/light appearance with yellow accents | ✅ Available now |
 | English/Russian UI, switchable in Preferences | ✅ Available now |
 | Zoom with mouse wheel, drag to pan, 100%, Fit view | ✅ Available now |
-| Default export preset **1136 × 710**, editable in Advanced Preferences | ✅ Saved with workspace; export pending |
+| Default export preset **1136 × 710**, editable in Advanced Preferences | ✅ Available now |
 | Always-visible yellow output outline, output-pixel rulers and subtle checkerboard canvas | ✅ Available now |
 | Paint and erase a mask, preview it over the photo | ✅ Available now |
 | Local LaMa / MI-GAN removal preview, mask-only compositing, Before/After and cancellation | ✅ Available now |
 | Verified LaMa / MI-GAN catalogue; select, download, check, remove and reinstall | ✅ Available now |
-| Fixed output frame; pan/zoom the photo underneath, fill and center controls | ✅ Saved with workspace; export pending |
-| Add a remembered user logo | 🛠 Planned |
-| Batch JPEG / PNG export, remove EXIF and other metadata | 🛠 Planned |
+| Fixed output frame; pan/zoom the photo underneath, fill and center controls | ✅ Available now |
+| Remember a PNG logo; drag, resize, adjust opacity, apply to all photos | ✅ Available now |
+| Current/batch JPEG / PNG export; quality control, metadata removal, cancellation | ✅ Available now |
 
 ### Get it
 
-**[Download v0.1.0-alpha.9 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.9)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
+**[Download v0.1.0-alpha.10 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.10)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
 
 This early alpha is **ad-hoc signed and not notarized**, so macOS may display a security warning. Verified on macOS 27.2 / Apple Silicon; Intel and other macOS versions have not been tested. See [verified changes](CHANGELOG.md).
 
@@ -74,17 +74,18 @@ Requires **Python 3.11+** and installs **PySide6**. The application does not dow
 | Zoom | Mouse wheel / trackpad scroll, or toolbar `+ / −` |
 | Pan | Select tool (`V`), or hold `Space` while using another tool |
 | Mask brush / eraser / crop | `B` / `E` / `C` |
+| Logo tool / Export | `L` / `⌘ Shift E` |
 | Change brush size | `[` / `]`, or the brush slider |
 | Fit photo in view | `⌘ 0` |
 | Actual pixels (100%) | `⌘ 1` |
 
-Workspace files (`.photoprep.json`) store local image paths and viewing positions, not image copies. Missing sources are reported when reopening; removing a photo from the workspace keeps its original file. Workspace history covers adding/removing photos, mask strokes, removal passes, crop plans and output dimensions. Originals remain read-only. Mixed-model workspaces use session format 4, recording the model for every removal pass. Earlier formats 1/2/3 remain readable. LaMa-only recipes retain format 3; workspaces without removal passes retain format 2. Older apps cannot open format 4.
+Workspace files (`.photoprep.json`) store local image paths and viewing positions, not image copies. Missing sources are reported when reopening; removing a photo from the workspace keeps its original file. Workspace history covers adding/removing photos, mask strokes, removal passes, crop plans and output dimensions. Originals remain read-only. Workspaces with logos use session format 5, storing a relative PNG path and output-relative placement. Formats 1/2/3/4 remain readable. Without a logo, mixed-model recipes use format 4, LaMa-only recipes format 3 and basic workspaces format 2. Older apps cannot open format 5.
 
 Tool controls live in the existing inspector, zoom controls sit above the filmstrip, and a shortened photo filename appears beside the app name. Switching tools does not reduce the photo viewport. The output frame stays fixed: drag the photo and scroll to zoom it beneath the frame; output dimensions change only in Settings.
 
 Paint a mask, then choose **Remove selected area** in the inspector. Choose **Preferences → Models** to select LaMa (208.0 MB) or MI-GAN (28.1 MB). Download, check, remove and reinstall each model, or let missing models download on first processing. Downloads use pinned Hugging Face revisions, HTTPS and SHA256 verification. A cancelled reinstall preserves the installed file. Photos never leave the Mac. Processing runs in a cancellable child process on the CPU; use **Before / After** or the compare icon to switch views. After each successful pass the current mask clears. Paint over the processed image to remove remaining artifacts; each new pass starts from the previous result. Clear mask affects only the next selection. Undo/redo also covers successful removal passes.
 
-AI results are temporary previews, limited to images up to 40 megapixels. A 512 × 512 context region is inferred and blended only inside the original full-resolution mask; unmasked pixels and alpha remain unchanged. Results depend on the scene and selection. Removal masks are saved in order. After reopening, **Restore retouch** rebuilds the accumulated result; previews evicted from memory can be restored the same way. Up to 100 removal passes are supported per photo. Each pass retains its model, so changing the active model does not change earlier retouch. Restoring a recipe downloads any missing models it needs, then loads one model at a time. Crop frames remain saved plans; image export is not implemented. Settings use two language buttons with immediate dialog translation and padded numeric fields.
+AI results are temporary previews, limited to images up to 40 megapixels. A 512 × 512 context region is inferred and blended only inside the original full-resolution mask; unmasked pixels and alpha remain unchanged. Results depend on the scene and selection. Removal masks are saved in order. After reopening, **Restore retouch** rebuilds the accumulated result; previews evicted from memory can be restored the same way. Up to 100 removal passes are supported per photo. Each pass retains its model, so changing the active model does not change earlier retouch. Restoring a recipe downloads any missing models it needs, then loads one model at a time. Export applies the crop frame to exact output dimensions. Settings use two language buttons with immediate dialog translation and padded numeric fields.
 
 ### Roadmap
 
@@ -94,7 +95,7 @@ AI results are temporary previews, limited to images up to 40 megapixels. A 512 
 - **Stage 3** — mask painting, eraser, fixed output frame and edit history. Complete.
 - **Stage 4** — local inpainting, iterative retouch and masked-only compositing. Complete.
 - **Stage 5** — curated model catalogue and validated downloads from Hugging Face. Complete.
-- **Stage 6** — new logo placement, optimized batch output and metadata stripping.
+- **Stage 6** — PNG logo placement, sequential batch output and metadata stripping. Complete.
 - **Stage 7** — performance, macOS packaging and release testing.
 
 ### Privacy and principles
@@ -115,3 +116,25 @@ If you like the idea, please **⭐ star the repository** to support further deve
 <p align="center"><strong>PhotoPrep</strong> · Made for real, repeatable image work.</p>
 
 Model attribution and dependency notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+### Logo and export
+
+Use the logo tool (`L`) to choose a PNG, reuse the last logo, drag it within the
+output frame, adjust size/opacity or apply its placement to every photo. Undo/redo
+covers logo changes. Before/After compares the original with the edited view.
+Logo PNGs are limited to 4 megapixels and 16 MB; missing assets must be relinked.
+
+Choose **Export** (`⌘ Shift E`), current photo or all photos, destination, JPEG/PNG
+and JPEG quality. Output uses the exact frame dimensions, such as 1136 × 710.
+Applied retouch is restored using each pass's original model; pending masks must
+be applied or cleared first. Source/asset changes during export are reported.
+
+Files are named `original-photoprep.jpg` / `.png`; collisions receive numbered
+suffixes. Atomic exclusive commits never replace existing files or originals.
+Export runs sequentially in a child process, keeps one decoded logo/model at a
+time and can be cancelled. Completed files remain; own temporary files are cleaned.
+
+Output is 8-bit JPEG or RGBA PNG in sRGB. JPEG flattens transparency on white.
+Fresh encoders omit source EXIF/GPS, XMP, comments, embedded profiles and source
+text. Colour is converted to sRGB before profiles are stripped. Source files stay
+read-only. Inputs and output dimensions are limited to 40 megapixels per image.

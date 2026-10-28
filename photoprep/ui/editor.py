@@ -3,11 +3,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 import math
+import weakref
 
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QBrush, QPixmap
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsView
 
+from ..branding import read_logo, logo_rect, moved_logo
 from ..editing import MaskStroke, CropRect, PhotoEdits, fit_crop, paint_stroke
 from .canvas import PhotoCanvas
 from ..workspace import ViewState
@@ -45,6 +47,27 @@ class MaskOverlay(QGraphicsItem):
         self.update()
 
 
+class LogoOverlay(QGraphicsItem):
+    def __init__(self,canvas):
+        super().__init__()
+        self.canvas=weakref.proxy(canvas)
+        self.setZValue(20)
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+
+    def boundingRect(self):
+        return self.canvas._pixmap_item.boundingRect() if self.canvas.has_photo else QRectF()
+
+    def paint(self,painter,option,widget=None):
+        canvas=self.canvas
+        placement=canvas._live_logo or canvas.edits.logo
+        if not placement or not placement.enabled or canvas._logo_image is None:return
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        painter.setOpacity(placement.opacity)
+        painter.drawImage(canvas.logo_source_rect,canvas._logo_image)
+        painter.restore()
+
+
 class EditorCanvas(PhotoCanvas):
     edits_committed = Signal(str, object)
     crop_changed = Signal()
@@ -53,6 +76,12 @@ class EditorCanvas(PhotoCanvas):
         super().__init__(parent)
         self._original_pixmap = None
         self._preview_active = False
+        self._logo_overlay=None
+        self._logo_image=None
+        self._logo_key=None
+        self._logo_drag=None
+        self._live_logo=None
+        self.logo_visible=True
         self.tool = 'select'
         self.brush_size = 40
         self.output_width, self.output_height = 1136, 710
@@ -137,6 +166,11 @@ class EditorCanvas(PhotoCanvas):
     def _clear_image(self):
         self.finish_edit()
         self._mask_overlay = None
+        self._logo_overlay=None
+        self._logo_image=None
+        self._logo_key=None
+        self._logo_drag=None
+        self._live_logo=None
         self._original_pixmap = None
         self._preview_active = False
         self._cursor_point = None
@@ -164,6 +198,8 @@ class EditorCanvas(PhotoCanvas):
             self._applying_image = False
         self._mask_overlay = MaskOverlay(image.width(), image.height())
         self.scene().addItem(self._mask_overlay)
+        self._logo_overlay=LogoOverlay(self)
+        self.scene().addItem(self._logo_overlay)
         self.set_edits(self.edits)
         self.set_tool(self.tool)
         self._update_rulers()
@@ -179,8 +215,41 @@ class EditorCanvas(PhotoCanvas):
             self._mask_overlay.setVisible(self.mask_visible and (not self._preview_active or self.tool in ('mask','erase')))
         self.viewport().update()
 
+    @property
+    def logo_source_rect(self):
+        if not self.has_photo or self._logo_image is None:return QRectF()
+        placement=self._live_logo or self.edits.logo
+        if placement is None:return QRectF()
+        crop=self._crop if self.tool=='crop' and self._crop else self.edits.crop or self._default_crop()
+        bounds=self._pixmap_item.boundingRect()
+        return logo_rect(crop.pixels(bounds.width(),bounds.height()),placement,self._logo_image)
+
+    def set_logo_visible(self,visible):
+        self.logo_visible=visible
+        if self._logo_overlay:self._logo_overlay.setVisible(visible)
+
+    def _update_logo(self):
+        from pathlib import Path
+        placement=self.edits.logo
+        key=None
+        if placement:
+            try:
+                stat=Path(placement.path).stat()
+                key=(placement.path,stat.st_mtime_ns,stat.st_size)
+                if key!=self._logo_key:
+                    self._logo_image=read_logo(placement.path)
+            except (OSError,ValueError):
+                self._logo_image=None
+        else:self._logo_image=None
+        self._logo_key=key
+        if self._logo_overlay:
+            self._logo_overlay.setVisible(self.logo_visible)
+            self._logo_overlay.update()
+
     def set_edits(self, edits):
         self.edits = edits
+        self._live_logo=None
+        self._update_logo()
         self._points = None
         if self._mask_overlay:
             self._mask_overlay.rebuild(edits.strokes)
@@ -237,7 +306,6 @@ class EditorCanvas(PhotoCanvas):
             self._placing_crop = False
         self.crop_changed.emit()
         self.viewport().update()
-        self.viewport().update()
 
     def _leave_crop(self):
         self._restoring = True
@@ -257,7 +325,7 @@ class EditorCanvas(PhotoCanvas):
         return super().view_state()
 
     def set_tool(self, tool):
-        if tool not in ('select','mask','erase','crop'):
+        if tool not in ('select','mask','erase','crop','logo'):
             raise ValueError('Unknown editing tool')
         self.finish_edit()
         previous_tool = self.tool
@@ -373,12 +441,26 @@ class EditorCanvas(PhotoCanvas):
 
     def finish_edit(self):
         self._finish_stroke()
+        if self._logo_drag is not None:
+            logo=self._live_logo
+            self._logo_drag=None
+            self._live_logo=None
+            if logo:self._commit(replace(self.edits,logo=logo))
+            self._update_logo()
         if self._crop_drag is not None and self._crop is not None:
             self._crop_drag = None
             self._commit(replace(self.edits,crop=self._crop))
 
     def mousePressEvent(self,event):
         if self.has_photo and event.button()==Qt.MouseButton.LeftButton:
+            if self.tool=='logo' and not self._pan_held:
+                point=self.mapToScene(event.position().toPoint())
+                if self.edits.logo and self.edits.logo.enabled and self.logo_source_rect.contains(point):
+                    self._logo_drag=(point,self.edits.logo)
+                    self._live_logo=self.edits.logo
+                    self._update_cursor()
+                    event.accept()
+                    return
             if self.tool == 'crop':
                 self._crop_drag = (event.position(),self._crop or self._default_crop())
                 self._update_cursor()
@@ -396,7 +478,14 @@ class EditorCanvas(PhotoCanvas):
     def mouseMoveEvent(self,event):
         point = self.mapToScene(event.position().toPoint())
         self._cursor_point = point if self.has_photo else None
-        if self._crop_drag is not None:
+        if self._logo_drag is not None and self._logo_image is not None:
+            start,old=self._logo_drag
+            bounds=self._pixmap_item.boundingRect()
+            crop=(self.edits.crop or self._default_crop()).pixels(bounds.width(),bounds.height())
+            self._live_logo=moved_logo(crop,old,self._logo_image,point-start)
+            self._logo_overlay.update()
+            event.accept()
+        elif self._crop_drag is not None:
             start,old = self._crop_drag
             delta = event.position()-start
             bounds = self._pixmap_item.boundingRect()
@@ -418,7 +507,7 @@ class EditorCanvas(PhotoCanvas):
         self.viewport().update()
 
     def mouseReleaseEvent(self,event):
-        if self._points is not None or self._crop_drag is not None:
+        if self._points is not None or self._crop_drag is not None or self._logo_drag is not None:
             self.finish_edit()
             self._update_cursor()
             event.accept()
@@ -426,6 +515,9 @@ class EditorCanvas(PhotoCanvas):
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self,event):
+        if event.key()==Qt.Key.Key_Escape and self._logo_drag is not None:
+            self._logo_drag=None;self._live_logo=None;self._update_logo()
+            event.accept();return
         if event.key()==Qt.Key.Key_Space and not event.isAutoRepeat():
             self.finish_edit()
             self._pan_held = True
@@ -472,6 +564,8 @@ class EditorCanvas(PhotoCanvas):
             cursor=Qt.CursorShape.OpenHandCursor
         else:
             cursor=Qt.CursorShape.BlankCursor if self._cursor_point is not None else Qt.CursorShape.CrossCursor
+        if self.tool=='logo' and not self._pan_held:
+            cursor=Qt.CursorShape.ClosedHandCursor if self._logo_drag else Qt.CursorShape.OpenHandCursor
         self.viewport().setCursor(cursor)
 
     def drawForeground(self,painter,rect):

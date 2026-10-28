@@ -103,6 +103,14 @@ class Workspace:
         self.edits[path] = edits
         return True
 
+    def set_logo_for_all(self,logo):
+        if not any(self.edits.get(photo.path,PhotoEdits()).logo!=logo for photo in self.photos):
+            return False
+        self._checkpoint()
+        for photo in self.photos:
+            self.edits[photo.path]=replace(self.edits.get(photo.path,PhotoEdits()),logo=logo)
+        return True
+
     def set_output_size(self, width: int, height: int) -> bool:
         if not (128 <= width <= 16000 and 128 <= height <= 16000):
             raise ValueError('Unsupported output dimensions')

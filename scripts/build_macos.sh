@@ -38,7 +38,7 @@ notices.mkdir()
 shutil.copyfile(root/'THIRD_PARTY_NOTICES.md',notices/'README.md')
 shutil.copyfile(root/'LICENSE',notices/'PhotoPrep-LICENSE')
 shutil.copyfile(root/'assets/licenses/MI-GAN-LICENSE',notices/'MI-GAN-LICENSE')
-for name in ('onnxruntime','numpy','protobuf','certifi'):
+for name in ('onnxruntime','numpy','protobuf','certifi','pillow'):
     package = distribution(name)
     for relative in package.files or ():
         if not any(token in str(relative).lower() for token in ('license','copying','notice')):

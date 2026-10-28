@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from .branding import LogoPlacement
 
 from PySide6.QtCore import Qt, QPointF, QRectF
 from PySide6.QtGui import QImage, QPainter, QPainterPath, QPen, QColor
@@ -32,6 +33,7 @@ class PhotoEdits:
     crop: CropRect | None = None
     passes: tuple[tuple[MaskStroke, ...], ...] = ()  # successful passes; strokes is the next mask
     pass_models: tuple[str, ...] = ()
+    logo: LogoPlacement | None = None
 
     @property
     def models_for_passes(self):

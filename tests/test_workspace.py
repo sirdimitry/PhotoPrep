@@ -59,7 +59,7 @@ def test_workspace_import_zoom_and_language(app, preferences, monkeypatch, tmp_p
             QTest.qWait(10)
         assert window.canvas.has_photo
         assert window.source_value.text() == "1600 × 900 px"
-        assert not window.export_button.isEnabled()
+        assert window.export_button.isEnabled()
         window.canvas.actual_size()
         assert window.canvas.transform().m11() * window.canvas.devicePixelRatioF() == 1
         window.canvas.zoom(1.15)

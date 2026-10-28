@@ -2,7 +2,7 @@
 
 PhotoPrep is MIT-licensed. Its bundled libraries retain their own licences.
 The macOS package includes the licence and notice files supplied by the installed
-ONNX Runtime, NumPy, protobuf and certifi distributions under `third-party/`.
+ONNX Runtime, NumPy, protobuf, certifi and Pillow distributions under `third-party/`.
 PySide6/Qt remains subject to its upstream LGPL/GPL/commercial licensing terms.
 
 ## LaMa model (downloaded separately)
@@ -40,3 +40,6 @@ inside the full-resolution mask and preserves all pixels outside it.
 PhotoPrep adapts MI-GAN's uint8 inputs and inverted mask convention to the same
 512px-context, mask-only compositor. Each saved removal pass records its model.
 Both model files are kept separately from the app and are verified before use.
+
+Pillow supplies JPEG/PNG encoding from fresh pixel buffers; its licence and
+third-party notices are included under `third-party/pillow/`.
