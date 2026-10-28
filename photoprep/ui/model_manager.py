@@ -9,8 +9,9 @@ import tempfile
 
 from PySide6.QtCore import QProcess, QTimer, Signal
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QFrame,QLabel,
-    QRadioButton,QButtonGroup,QPushButton,QProgressBar)
+    QRadioButton,QButtonGroup,QPushButton,QProgressBar,QFileDialog)
 
+from ..diagnostics import event,error as log_error
 from ..catalog import MODELS, DEFAULT_MODEL
 from ..inference import storage_root, model_path, cleanup_download
 from ..i18n import tr
@@ -22,6 +23,8 @@ class ModelManager(QWidget):
     def __init__(self,settings,parent=None):
         super().__init__(parent)
         self.language = settings.language
+        self.settings=settings
+        self._local_source=None
         self.process = None
         self._directory = None
         self._buffer = b''
@@ -69,6 +72,9 @@ class ModelManager(QWidget):
                 row.addWidget(button)
                 buttons[action] = button
             inner.addLayout(row)
+            local=QPushButton();local.setProperty('compact',True);local.setFixedHeight(28)
+            local.clicked.connect(lambda checked=False,m=model_id:self.choose_local(m));inner.addWidget(local)
+            buttons['local']=local
             layout.addWidget(frame)
             self.cards[model_id] = {'choice':choice,'description':description,'status':status,**buttons}
         row = QHBoxLayout()
@@ -118,30 +124,43 @@ class ModelManager(QWidget):
             state = self._states.get(model_id,{'state':'unknown','bytes':0})
             installed = state['state']!='absent' and state['state']!='unknown'
             card['description'].setText(tr(language,'model_'+model_id+'_description'))
-            card['status'].setText(tr(language,'model_size_state',size=f'{spec.size/1e6:.1f}',disk=f'{state["bytes"]/1e6:.1f}',state=tr(language,'model_'+state['state']),license=spec.license))
+            card['local'].setText(tr(language,'model_choose_local'));card['local'].setEnabled(not self.busy)
+            card['status'].setText(tr(language,'model_size_state_gb' if spec.size>=1e9 else 'model_size_state',size=f'{spec.size/(1e9 if spec.size>=1e9 else 1e6):.2f}',disk=f'{state["bytes"]/(1e9 if spec.size>=1e9 else 1e6):.2f}',state=tr(language,'model_'+state['state']),license=spec.license))
             for action in ('download','verify','delete'):
                 card[action].setText(tr(language,'model_reinstall' if action=='download' and installed else 'model_'+action))
                 card[action].setEnabled(not self.busy and (action=='download' or installed))
         self.status.setText(tr(language,self._status_key))
 
-    def run(self,action,model_id=None):
+    def choose_local(self,model_id):
+        if self.busy:return
+        spec=MODELS[model_id]
+        if spec.files:
+            source=QFileDialog.getExistingDirectory(self,tr(self.language,'model_choose_sdxl_folder'),str(Path.home()))
+        else:
+            source,_=QFileDialog.getOpenFileName(self,tr(self.language,'model_choose_onnx'),str(Path.home()),'ONNX (*.onnx)')
+        if source:self.run('import',model_id,source=source)
+
+    def run(self,action,model_id=None,*,source=None):
         if self.busy:
             return
         if model_id is not None and model_id not in MODELS:
             return
+        event('model_action',action=action,model=model_id)
         try:
             cache = storage_root()/'work'/'model-jobs'
             cache.mkdir(parents=True,exist_ok=True)
             self._directory = Path(tempfile.mkdtemp(prefix='catalog-',dir=cache))
             path = self._directory/'request.json'
-            path.write_text(json.dumps({'action':action,'model_id':model_id,'directory':str(model_path(DEFAULT_MODEL).parent),'force':action=='download'}))
+            self._local_source=source
+            reinstall=action=='download' and self._states.get(model_id,{}).get('state') in ('ready','damaged')
+            path.write_text(json.dumps({'action':action,'model_id':model_id,'directory':str(model_path(DEFAULT_MODEL).parent),'force':reinstall,'source':source}))
             self._action,self._model_id = action,model_id
             self._buffer,self._pid,self._error,self._cancelled = b'',0,None,False
             process = QProcess(self)
             self.process = process
             process.started.connect(lambda:setattr(self,'_pid',process.processId()))
             process.readyReadStandardOutput.connect(self._read)
-            process.readyReadStandardError.connect(lambda:process.readAllStandardError())
+            process.readyReadStandardError.connect(self._stderr)
             process.finished.connect(self._finished)
             process.errorOccurred.connect(self._process_error)
             args = ['--photoprep-worker','catalog',str(path)]
@@ -158,10 +177,16 @@ class ModelManager(QWidget):
             self.retranslate(self.language)
             self.changed.emit()
             process.start()
-        except OSError:
+        except OSError as exc:
+            log_error('model_job_start_failed',exc,action=action,model=model_id)
             self._status_key = 'models_operation_error'
             self._cleanup()
             self.retranslate(self.language)
+
+    def _stderr(self):
+        if self.process:
+            text=bytes(self.process.readAllStandardError()).decode('utf-8',errors='replace')
+            if text.strip():event('child_stderr',component=type(self).__name__,detail=text[-16000:])
 
     def _read(self):
         if not self.process:
@@ -177,7 +202,7 @@ class ModelManager(QWidget):
                     self._states = data['inventory']
                 if 'error' in data:
                     self._error = data['error']
-                if data.get('stage')=='downloading':
+                if data.get('stage') in ('downloading','installing'):
                     self.progress.setRange(0,100)
                     self.progress.setValue(data.get('percent',0))
             except (ValueError,TypeError):
@@ -191,8 +216,11 @@ class ModelManager(QWidget):
         if not self.process:
             return
         self._read()
+        event('child_finished',component=type(self).__name__,status=code,exit_status=str(status),error=self._error)
         process,self.process = self.process,None
         process.deleteLater()
+        if not self._cancelled and code==0 and self._action=='import' and self._local_source:
+            self.settings.set_model_source(self._model_id,self._local_source)
         if self._cancelled:
             self._status_key = 'models_cancelled'
         elif code==0 and status==QProcess.ExitStatus.NormalExit:
@@ -218,7 +246,7 @@ class ModelManager(QWidget):
             self._cleanup()
 
     def _cleanup(self):
-        if self._action=='download' and self._model_id:
+        if self._action in ('download','import') and self._model_id:
             cleanup_download(model_path(self._model_id),self._pid)
         if self._directory:
             shutil.rmtree(self._directory,ignore_errors=True)

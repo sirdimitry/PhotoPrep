@@ -11,8 +11,9 @@ import tempfile
 from PySide6.QtCore import QObject, QProcess, Signal
 from PySide6.QtGui import QImage
 
+from ..diagnostics import event,error as log_error
 from ..catalog import DEFAULT_MODEL, get_model
-from ..inference import model_path, storage_root, cleanup_download
+from ..inference import model_path, storage_root, cleanup_download, model_present
 
 
 class AIController(QObject):
@@ -74,10 +75,11 @@ class AIController(QObject):
             self._downloads = []
             for item in required:
                 model = model_path(item)
-                if item in self._redownload or not model.is_file() or model.is_symlink() or model.stat().st_size!=get_model(item).size:
+                if item in self._redownload or not model_present(model,item):
                     self._downloads.append(item)
             self._next()
         except (OSError,ValueError) as exc:
+            log_error('inference_job_start_failed',exc,model=model_id)
             self._cleanup()
             self.failed.emit('unknown_model' if isinstance(exc,ValueError) else 'inference_output_error')
             self.changed.emit()
@@ -86,7 +88,7 @@ class AIController(QObject):
         if self._downloads:
             self._download_id = self._downloads.pop(0)
             path = self._directory/'download.json'
-            path.write_text(json.dumps({'action':'download','model_id':self._download_id,'directory':str(model_path(self._download_id).parent),'force':self._download_id in self._redownload}))
+            path.write_text(json.dumps({'action':'download','model_id':self._download_id,'directory':str(model_path(self._download_id).parent),'force':False}))
             self._launch('download',path)
         else:
             self._download_id = None
@@ -103,7 +105,7 @@ class AIController(QObject):
         self.process = process
         process.started.connect(lambda:setattr(self,'_child_pid',process.processId()))
         process.readyReadStandardOutput.connect(self._read)
-        process.readyReadStandardError.connect(lambda:process.readAllStandardError())
+        process.readyReadStandardError.connect(self._stderr)
         process.finished.connect(self._finished)
         process.errorOccurred.connect(self._process_error)
         arguments = ['--photoprep-worker','catalog' if command=='download' else command,str(path)]
@@ -115,6 +117,11 @@ class AIController(QObject):
         self.progress.emit('downloading' if command=='download' else 'processing',0)
         self.changed.emit()
         process.start()
+
+    def _stderr(self):
+        if self.process:
+            text=bytes(self.process.readAllStandardError()).decode('utf-8',errors='replace')
+            if text.strip():event('child_stderr',component=type(self).__name__,detail=text[-16000:])
 
     def _read(self):
         self._buffer += bytes(self.process.readAllStandardOutput())
@@ -140,6 +147,7 @@ class AIController(QObject):
         if self.process is None:
             return
         self._read()
+        event('child_finished',component=type(self).__name__,status=code,exit_status=str(status),error=self._error)
         process,self.process = self.process,None
         process.deleteLater()
         if self._cancelled:

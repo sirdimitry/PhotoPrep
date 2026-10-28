@@ -40,7 +40,7 @@ def save_session(path: Path, workspace: Workspace) -> None:
             result['logo']['path']=relative(Path(edits.logo.path))
         return result
     document = {
-        'format': 'PhotoPrep', 'version': 6 if any(edits.logo and edits.logo.mode=='template' for edits in workspace.edits.values()) else 5 if any(edits.logo for edits in workspace.edits.values()) else 4 if any(any(model!='lama' for model in edits.models_for_passes) for edits in workspace.edits.values()) else 3 if any(edits.passes for edits in workspace.edits.values()) else 2,
+        'format': 'PhotoPrep', 'version': 7 if any('sdxl' in edits.models_for_passes for edits in workspace.edits.values()) else 6 if any(edits.logo and edits.logo.mode=='template' for edits in workspace.edits.values()) else 5 if any(edits.logo for edits in workspace.edits.values()) else 4 if any(any(model!='lama' for model in edits.models_for_passes) for edits in workspace.edits.values()) else 3 if any(edits.passes for edits in workspace.edits.values()) else 2,
         'output_size': [workspace.output_width, workspace.output_height],
         'selected': relative(workspace.selected) if workspace.selected else None,
         'photos': [{'path': relative(photo.path),
@@ -158,7 +158,7 @@ def load_session(path: Path) -> tuple[Workspace, int]:
     except (ValueError, UnicodeError, RecursionError) as exc:
         raise SessionError('session_invalid') from exc
     if (not isinstance(document, dict) or document.get('format') != 'PhotoPrep'
-            or type(document.get('version')) is not int or document['version'] not in (1,2,3,4,5,6)
+            or type(document.get('version')) is not int or document['version'] not in (1,2,3,4,5,6,7)
             or not isinstance(document.get('photos'), list)):
         raise SessionError('session_invalid')
     if len(document['photos']) > MAX_PHOTOS:

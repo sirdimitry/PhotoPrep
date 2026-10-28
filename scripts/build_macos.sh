@@ -38,7 +38,8 @@ notices.mkdir()
 shutil.copyfile(root/'THIRD_PARTY_NOTICES.md',notices/'README.md')
 shutil.copyfile(root/'LICENSE',notices/'PhotoPrep-LICENSE')
 shutil.copyfile(root/'assets/licenses/MI-GAN-LICENSE',notices/'MI-GAN-LICENSE')
-for name in ('onnxruntime','numpy','protobuf','certifi','pillow'):
+shutil.copyfile(root/'assets/licenses/SDXL-LICENSE.md',notices/'SDXL-LICENSE.md')
+for name in ('onnxruntime','numpy','protobuf','certifi','pillow','torch','diffusers','transformers','accelerate','safetensors','huggingface-hub','tokenizers','requests','filelock','fsspec','sympy','networkx','psutil','tqdm','pyyaml','regex','importlib-metadata','httpx','httpcore','anyio','jinja2','markupsafe','mpmath','typing-extensions','urllib3','charset-normalizer','idna','h11','hf-xet','zipp'):
     package = distribution(name)
     for relative in package.files or ():
         if not any(token in str(relative).lower() for token in ('license','copying','notice')):
@@ -51,6 +52,16 @@ for name in ('onnxruntime','numpy','protobuf','certifi','pillow'):
 ASSETS
 "$PYTHON" -m PyInstaller \
   --noconfirm --clean --windowed --onedir \
+  --hidden-import diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl_inpaint \
+  --hidden-import transformers.models.clip.modeling_clip \
+  --hidden-import transformers.models.clip.tokenization_clip \
+  --hidden-import transformers.models.clip.tokenization_clip_fast \
+  --hidden-import diffusers.schedulers.scheduling_euler_discrete \
+  --hidden-import diffusers.schedulers.scheduling_ddim \
+  --hidden-import diffusers.models.autoencoders.autoencoder_kl \
+  --hidden-import diffusers.models.unets.unet_2d_condition \
+  --copy-metadata diffusers --copy-metadata transformers --copy-metadata torch \
+  --copy-metadata accelerate --copy-metadata huggingface-hub --copy-metadata safetensors \
   --name "PhotoPrep" --icon "assets/app-icon.icns" \
   --osx-bundle-identifier "com.sirdimitry.PhotoPrep" \
   --target-architecture "$ARCH" \

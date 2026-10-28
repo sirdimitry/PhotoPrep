@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.1.0-alpha.16 — 2026-10-28
+
+- Add optional SDXL Inpainting on Apple Silicon Metal, with 1024px context and
+  isolated sequential inference. Keep LaMa as default and preserve mask-only RGBA
+  compositing, cancellation, per-pass model identity and mixed-model restore/export.
+- Download only the official pinned FP16 snapshot: 18 files / 6,941,218,469 bytes.
+  Verify each size/SHA256, stage the complete replacement before committing, reject
+  symlinks, preserve installed files on failed download and clean only own staging.
+- Explain size, slower speed and the alternative of refining with LaMa/MI-GAN in
+  the model card before download. Keep settings compact with a scrollable catalogue.
+- Connect supported weights already on disk through a per-model chooser. Validate
+  the exact inpainting version, every file size and SHA256 before installation;
+  support verified Hugging Face cache links and keep originals unchanged.
+- Add a private local diagnostic log with a 10 MiB auto-reset, credential/URL-query
+  redaction and multiprocess locking. Record worker exceptions and download failures.
+- Reuse verified installed weights, remembered local sources and the exact Hub
+  cache before using the network; force a fresh download only on explicit reinstall.
+- Retry transient download failures up to three attempts per file, resume partial
+  files with HTTP Range and bypass stale cached redirects.
+- Save SDXL recipes in session format 7, reading formats 1–6. Bundle runtime
+  libraries and licences separately from weights; disable hub networking/telemetry
+  during inference. Use the existing Python environment.
+
+Validation: 122 tests passed offscreen; native macOS UI and model-card behavior
+were checked separately. A real
+SDXL pass on M3 Max / 36 GB took 56 seconds and preserved every unmasked RGBA pixel,
+alpha and source-file hash. No additional system Python was installed.
+
 ## v0.1.0-alpha.15 — 2026-10-28
 
 - Add the author’s public GitHub profile link next to X in Preferences → About.

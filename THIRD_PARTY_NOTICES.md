@@ -43,3 +43,13 @@ Both model files are kept separately from the app and are verified before use.
 
 Pillow supplies JPEG/PNG encoding from fresh pixel buffers; its licence and
 third-party notices are included under `third-party/pillow/`.
+
+## SDXL Inpainting (optional weights)
+
+Official model: https://huggingface.co/diffusers/stable-diffusion-xl-1.0-inpainting-0.1
+Developed by the Diffusers team, initialized from Stability AI SDXL Base 1.0.
+Weights are downloaded separately as FP16 safetensors from a pinned revision.
+Model licence: CreativeML Open RAIL++-M (not the application's MIT licence).
+Full terms: assets/licenses/SDXL-LICENSE.md, included in the app's third-party notices.
+PyTorch, Diffusers, Transformers, Accelerate and their dependencies retain their
+own licences, included with the application. No user images are sent to these projects.

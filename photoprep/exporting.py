@@ -13,6 +13,7 @@ from PySide6.QtCore import QRectF
 from PySide6.QtGui import QImage,QImageReader,QPainter,QColorSpace
 
 from .branding import read_logo,logo_rect
+from .diagnostics import event,error as log_error
 from .catalog import get_model
 from .editing import fit_crop,render_mask
 from .inference import model_verified,download_model,create_predictor
@@ -132,6 +133,7 @@ def export_job(request_path):
     width,height=workspace.output_width,workspace.output_height
     if width*height>MAX_PIXELS:raise ValueError('export_size_large')
     if request['format'] not in ('JPEG','PNG') or not 1<=request['quality']<=100:raise ValueError('export_failed')
+    event('export_started',count=len(wanted),format=request['format'],width=width,height=height)
     ids=set()
     protected=[Path(path) for path in request.get("protected",[])] or [photo.path for photo in workspace.photos]
     for photo in photos:
@@ -143,7 +145,7 @@ def export_job(request_path):
     for key,path in paths.items():
         emit(stage='export_model',name=get_model(key).name)
         if not model_verified(path,key):
-            try:download_model(path,key,force=True)
+            try:download_model(path,key,force=False)
             except OSError as exc:raise ValueError('model_download_error') from exc
     predictor=create_predictor(paths) if ids else None
     completed,errors=0,[]
@@ -179,11 +181,13 @@ def export_job(request_path):
             completed+=1
             emit(file=str(target),completed=completed,index=index,total=len(wanted))
         except Exception as exc:
+            log_error('export_file_failed',exc,index=index,models=edits.models_for_passes)
             if isinstance(exc,OSError) and exc.errno in (errno.ENOSPC,errno.EDQUOT,errno.EROFS,errno.EACCES,errno.EIO):
                 raise ValueError("export_failed") from exc
             code=str(exc)
-            if code not in ('export_source_changed','logo_invalid','inference_image_large','inference_image_error','model_integrity_error'):
+            if code not in ('export_source_changed','logo_invalid','inference_image_large','inference_image_error','model_integrity_error','sdxl_runtime_missing','sdxl_requires_mps','sdxl_memory_error','model_disk_space'):
                 code='export_failed'
             errors.append({'name':photo.path.name,'error':code})
             emit(file_error=photo.path.name,error=code)
+    event('export_finished',completed=completed,errors=len(errors),total=len(wanted))
     emit(summary=True,completed=completed,errors=errors,total=len(wanted))

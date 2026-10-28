@@ -8,6 +8,16 @@ Language = Literal["en", "ru"]
 
 STRINGS = {
     "en": {
+        'model_choose_local': 'Choose from disk…',
+        'model_choose_sdxl_folder': 'Choose the official SDXL FP16 model folder',
+        'model_choose_onnx': 'Choose a supported inpainting ONNX file',
+        'model_incompatible': 'This model is incompatible or incomplete. Choose the exact supported inpainting version; size and SHA256 must match. SDXL needs its full FP16 folder, not a single checkpoint.',
+        'model_sdxl_description': 'SDXL Inpainting · optional for complex backgrounds. If smears remain, paint another mask and retry LaMa/MI-GAN, or try SDXL. Download: 6.94 GB; slower processing. Results depend on the photo. Uses Apple GPU; extra memory required.',
+        'model_size_state_gb': '{size} GB · On disk: {disk} GB · {state} · {license}',
+        'sdxl_runtime_missing': 'SDXL libraries are missing. Use the full PhotoPrep build or install its optional SDXL dependencies.',
+        'sdxl_requires_mps': 'SDXL needs an available Apple Silicon GPU (Metal). LaMa and MI-GAN remain available.',
+        'sdxl_memory_error': 'Not enough GPU memory for SDXL. Close memory-heavy apps or use LaMa/MI-GAN.',
+        'model_disk_space': 'Not enough free disk space for the model download. SDXL needs about 7 GB free; reinstalling temporarily needs another copy.',
         'logo_not_applied': 'No logo on this photo. Choose a PNG, use Last used, or enable the logo on all photos.',
         'export_common_format': 'One format for all selected photos',
         'export_start_all': 'Export all ({count})',
@@ -219,6 +229,16 @@ STRINGS = {
         "photos_empty": "No photos yet",
     },
     "ru": {
+        'model_choose_local': 'Выбрать на диске…',
+        'model_choose_sdxl_folder': 'Выберите папку официальной SDXL FP16',
+        'model_choose_onnx': 'Выберите поддерживаемую ONNX-модель для inpaint',
+        'model_incompatible': 'Модель не подходит или загружена не полностью. Нужна поддерживаемая inpaint-версия с совпадающими размером и SHA256. Для SDXL выберите всю папку FP16, а не один checkpoint.',
+        'model_sdxl_description': 'SDXL Inpainting · для сложного фона. Если остались разводы, дорисуйте маску и повторите LaMa/MI-GAN либо попробуйте SDXL. Загрузка — 6,94 ГБ; работает медленнее. Результат зависит от фото. Использует GPU Apple и требует больше памяти.',
+        'model_size_state_gb': '{size} ГБ · На диске: {disk} ГБ · {state} · {license}',
+        'sdxl_runtime_missing': 'Нет библиотек SDXL. Используйте полную сборку PhotoPrep или установите дополнительные зависимости SDXL.',
+        'sdxl_requires_mps': 'Для SDXL нужен доступный GPU Apple Silicon (Metal). LaMa и MI-GAN остаются доступны.',
+        'sdxl_memory_error': 'Недостаточно памяти GPU для SDXL. Закройте тяжёлые приложения либо используйте LaMa/MI-GAN.',
+        'model_disk_space': 'Недостаточно места для загрузки модели. SDXL нужно около 7 ГБ свободного места; при переустановке временно нужна ещё одна копия.',
         'logo_not_applied': 'На этом фото нет логотипа. Выберите PNG, нажмите «Последний» или включите лого на всех фото.',
         'export_common_format': 'Единый формат для выбранных фото',
         'export_start_all': 'Экспортировать все ({count})',

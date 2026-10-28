@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "photoprep"
-version = "0.1.0a15"
+version = "0.1.0a16"
 description = "A small, local-first photo preparation workspace for macOS"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -21,4 +21,8 @@ photoprep = "photoprep.main:main"
 packages = ["photoprep", "photoprep.ui"]
 
 [project.optional-dependencies]
+sdxl = ["torch>=2.6,<3", "diffusers>=0.35,<1", "transformers>=4.45,<5", "accelerate>=1,<2", "safetensors>=0.4,<1", "huggingface-hub>=0.34,<1"]
 dev = ["pytest>=8", "Pillow>=10", "pyinstaller>=6"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

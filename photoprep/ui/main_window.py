@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import __version__
+from ..diagnostics import event
 from ..i18n import tr
 from ..models import Photo, list_folder_images
 from ..settings import Preferences
@@ -32,7 +33,7 @@ from .filmstrip import FilmstripDelegate
 from .widgets import PhotoNameLabel, ToolOptions
 from .ai_controller import AIController
 from .export_dialog import ExportDialog
-from ..inference import model_path
+from ..inference import model_path, model_present
 from ..catalog import get_model
 
 
@@ -1061,6 +1062,8 @@ class MainWindow(QMainWindow):
         self.canvas._pool.waitForDone(5000)
 
     def closeEvent(self, event):
+        from ..diagnostics import event as record
+        record('window_close_requested',unsaved=self.workspace.dirty,worker_active=self.ai.busy)
         if self._confirm_discard():
             self.shutdown()
             event.accept()
@@ -1092,7 +1095,7 @@ class MainWindow(QMainWindow):
         self.process_button.setEnabled(enabled and (bool(edits.strokes) or (bool(edits.passes) and not preview)))
         self.process_button.setText(self.t('ai_restore' if edits.passes and not preview and not edits.strokes else 'process_mask'))
         spec = get_model(self.settings.model_id)
-        self.process_button.setToolTip(self.t('ai_download_hint',name=spec.name,size=f'{spec.size/1e6:.1f}') if not model_path(self.settings.model_id).is_file() else self.t('ai_model_active',name=spec.name))
+        self.process_button.setToolTip(self.t('ai_download_hint',name=spec.name,size=f'{spec.size/1e6:.1f}') if not model_present(model_path(self.settings.model_id),self.settings.model_id) else self.t('ai_model_active',name=spec.name))
         self.cancel_ai_button.setVisible(self.ai.busy)
         for widget in (self.thumbnails,self.open_files_button,self.open_folder_button,self.settings_button):
             widget.setEnabled(not self.ai.busy)

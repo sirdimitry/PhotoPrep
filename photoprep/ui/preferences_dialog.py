@@ -6,7 +6,7 @@ from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QLineEdit, QButtonGroup, QDialog, QDialogButtonBox, QFrame,
     QGridLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton,
-    QVBoxLayout, QToolButton, QSizePolicy, QTabWidget, QWidget, QTextBrowser,
+    QVBoxLayout, QToolButton, QSizePolicy, QTabWidget, QWidget, QTextBrowser, QScrollArea,
 )
 
 from .. import __version__
@@ -53,7 +53,9 @@ class PreferencesDialog(QDialog):
         root = QVBoxLayout(general_page)
         self.tabs.addTab(general_page,'')
         self.models = ModelManager(settings,self)
-        self.tabs.addTab(self.models,'')
+        model_scroll=QScrollArea();model_scroll.setWidgetResizable(True);model_scroll.setWidget(self.models)
+        model_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff);model_scroll.setMinimumHeight(340)
+        self.tabs.addTab(model_scroll,'')
         self.tabs.addTab(self._build_about(),'')
         outer.addWidget(self.tabs)
         root.setContentsMargins(8,8,8,8)

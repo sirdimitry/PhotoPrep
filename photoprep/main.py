@@ -19,6 +19,8 @@ def main() -> int:
     app.setOrganizationName("sirdimitry")
     app.setApplicationName("PhotoPrep")
     app.setApplicationVersion(__version__)
+    from .diagnostics import install,event
+    install();event('app_started',version=__version__,packaged=bool(getattr(sys,'frozen',False)))
     app.setWindowIcon(QIcon(app_icon_path()))
     window = MainWindow()
     window.show()
@@ -31,9 +33,11 @@ def main() -> int:
         QTimer.singleShot(150,dialog.reject)
         QTimer.singleShot(350,window.close)
     result=app.exec()
+    event('app_event_loop_finished',status=result)
     window.shutdown()
     window.deleteLater()
     QCoreApplication.sendPostedEvents(None,QEvent.Type.DeferredDelete)
+    event('app_closed',status=result)
     return result
 
 

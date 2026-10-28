@@ -11,7 +11,7 @@
 ![PhotoPrep — AI cleanup, cropping, branding and batch workflows](assets/github-banner.png)
 
 <p align="center">
-  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.15-FACC15?style=flat-square&labelColor=202227">
+  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.16-FACC15?style=flat-square&labelColor=202227">
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-33373d?style=flat-square">
   <img alt="Language" src="https://img.shields.io/badge/UI-English%20%2B%20Русский-33373d?style=flat-square">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-33373d?style=flat-square"></a>
@@ -44,7 +44,7 @@
 
 ### Get it
 
-**[Download v0.1.0-alpha.15 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.15)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
+**[Download v0.1.0-alpha.16 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.16)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
 
 This early alpha is **ad-hoc signed and not notarized**, so macOS may display a security warning. Verified on macOS 27.2 / Apple Silicon; Intel and other macOS versions have not been tested. See [verified changes](CHANGELOG.md).
 
@@ -186,3 +186,44 @@ and crop plans. The operation is one undo step.
 Export defaults to **all photos** when a collection contains multiple images.
 Choose JPEG or PNG once for the entire selection; the current-photo option remains
 available. Files still save beside their originals with collision-safe `-logo` names.
+
+### Optional SDXL Inpainting
+
+Preferences → Models offers SDXL Inpainting alongside LaMa and MI-GAN. The card
+explains before download: if smears remain, refine the mask and retry a lightweight
+model, or try SDXL for complex backgrounds. SDXL is slower and results vary.
+Its pinned FP16 download contains 18 files totaling **6,941,218,469 bytes (6.94 GB)**.
+Weights download separately; the full app bundles the required runtime libraries.
+
+SDXL uses the Apple Silicon GPU via Metal, a 1024 × 1024 context, 20 sampling steps,
+a fixed background-removal prompt and a fixed seed. Processing remains local;
+only the exact original mask is composited, preserving all unmasked RGBA pixels.
+Passes can mix SDXL, LaMa and MI-GAN. SDXL recipes use session format 7; formats
+1–6 remain readable. Models load one at a time during restore/export.
+
+A test pass on M3 Max / 36 GB took about 56 seconds including model verification
+and loading. This is one test, not a speed or quality guarantee. Memory-heavy apps
+may need to be closed. Source installs may use `pip install -e ".[dev,sdxl]"` in the
+existing environment; no additional Python version is required. Model terms are
+CreativeML Open RAIL++-M, separate from PhotoPrep's MIT licence.
+
+### Private diagnostics
+
+A local service log records starts, model operations, worker failures and network
+errors. It has no GUI entry and no upload mechanism. The single log resets when
+the next write would exceed 10 MiB; credentials and signed URL queries are redacted.
+SDXL downloads retry transient failures and resume partial files within the active
+operation. A failed/cancelled replacement preserves the installed pinned model.
+
+### Use existing weights
+
+Each model card has **Choose from disk…**. Pick the supported ONNX file for
+LaMa/MI-GAN or the complete official FP16 folder for SDXL. Only the pinned, tested
+inpainting versions are accepted after size/SHA256 verification; arbitrary text-to-
+image checkpoints, FP32 variants and incomplete folders are rejected. Existing
+files stay unchanged. Same-volume files can be linked without a second physical
+copy; other volumes are copied into private application storage.
+
+Ordinary downloads first verify installed weights, then check remembered local
+sources and the exact official Hub cache. Compatible existing weights are reused
+without a network request. A fresh download is forced only by explicit Reinstall.

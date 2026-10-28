@@ -1,4 +1,4 @@
-"""Pinned local LaMa model and isolated, mask-only inference. No photo uploads."""
+"""Pinned local inpainting models and isolated, mask-only inference. No photo uploads."""
 from __future__ import annotations
 
 import hashlib
@@ -32,6 +32,9 @@ def model_path(model_id=DEFAULT_MODEL):
 
 def model_verified(path,model_id=DEFAULT_MODEL):
     spec = get_model(model_id)
+    if spec.files:
+        from .sdxl_store import verified
+        return verified(path,spec)
     path = Path(path)
     try:
         if not path.is_file() or path.is_symlink() or path.stat().st_size != spec.size:
@@ -45,6 +48,16 @@ def model_verified(path,model_id=DEFAULT_MODEL):
         return False
 
 
+def model_present(path,model_id=DEFAULT_MODEL):
+    spec=get_model(model_id)
+    if spec.files:
+        from .sdxl_store import present
+        return present(path,spec)
+    path=Path(path)
+    try:return path.is_file() and not path.is_symlink() and path.stat().st_size==spec.size
+    except OSError:return False
+
+
 def progress(stage, percent=0):
     print(json.dumps({'stage':stage, 'percent':percent}), flush=True)
 
@@ -55,13 +68,28 @@ def download_model(target,model_id=DEFAULT_MODEL,*,force=False):
     spec = get_model(model_id)
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
-    if not force and model_verified(target,model_id):
-        return
+    if not force:
+        from .diagnostics import event
+        if model_verified(target,model_id):
+            event('model_reused_installed',model=model_id)
+            return
+        from .model_import import cached_sources,install_local
+        for source in cached_sources(spec):
+            try:
+                install_local(source,target,spec,progress)
+                event('model_reused_local',model=model_id)
+                return
+            except ValueError as exc:
+                if str(exc)!='model_incompatible':raise
+                event('local_model_candidate_incompatible',model=model_id)
     with model_lock(target):
         _download_locked(target,spec,certifi)
 
 
 def _download_locked(target,spec,certifi):
+    if spec.files:
+        from .sdxl_store import download
+        return download(target,spec,progress,certifi)
     partial = target.with_name(target.name+f'.{os.getpid()}.part')
     partial.unlink(missing_ok=True)
     digest, received = hashlib.sha256(), 0
@@ -122,7 +150,7 @@ def context_rect(mask):
 
 
 def inpaint(source, mask, predict):
-    """Run 512px context inference; preserve every unmasked RGBA pixel exactly."""
+    """Run model-sized context inference; preserve every unmasked RGBA pixel exactly."""
     import numpy as np
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QImage
@@ -130,23 +158,25 @@ def inpaint(source, mask, predict):
         raise ValueError('inference_image_error')
     if source.width()*source.height()>40_000_000:
         raise ValueError('inference_image_large')
+    resolution=getattr(predict,'resolution',512)
+    if resolution not in (512,1024):raise ValueError('inference_output_error')
     original = image_array(source)
     coverage = mask_array(mask)
     x,y,width,height = context_rect(coverage)
-    rgb = source.copy(x,y,width,height).scaled(512,512,Qt.AspectRatioMode.IgnoreAspectRatio,Qt.TransformationMode.SmoothTransformation)
-    cropped_mask = mask.copy(x,y,width,height).scaled(512,512,Qt.AspectRatioMode.IgnoreAspectRatio,Qt.TransformationMode.SmoothTransformation)
+    rgb = source.copy(x,y,width,height).scaled(resolution,resolution,Qt.AspectRatioMode.IgnoreAspectRatio,Qt.TransformationMode.SmoothTransformation)
+    cropped_mask = mask.copy(x,y,width,height).scaled(resolution,resolution,Qt.AspectRatioMode.IgnoreAspectRatio,Qt.TransformationMode.SmoothTransformation)
     binary = mask_array(cropped_mask)>0
     # A small inference-only dilation covers soft mask edges. Final compositing
     # still uses the exact original coverage, so no extra pixels are changed.
     padded = np.pad(binary,2)
-    binary = np.logical_or.reduce([padded[dy:dy+512,dx:dx+512] for dy in range(5) for dx in range(5)])
+    binary = np.logical_or.reduce([padded[dy:dy+resolution,dx:dx+resolution] for dy in range(5) for dx in range(5)])
     image_input = np.transpose(image_array(rgb)[:,:,:3].astype(np.float32)/255,(2,0,1))[None]
     mask_input = binary.astype(np.float32)[None,None]
     predicted = np.asarray(predict(image_input,mask_input))
-    if predicted.shape!=(1,3,512,512) or not np.isfinite(predicted).all():
+    if predicted.shape!=(1,3,resolution,resolution) or not np.isfinite(predicted).all():
         raise ValueError('inference_output_error')
     output = np.clip(predicted[0].transpose(1,2,0),0,255).astype(np.uint8)
-    rgba = np.concatenate((output,np.full((512,512,1),255,dtype=np.uint8)),axis=2)
+    rgba = np.concatenate((output,np.full((resolution,resolution,1),255,dtype=np.uint8)),axis=2)
     restored = array_image(rgba).scaled(width,height,Qt.AspectRatioMode.IgnoreAspectRatio,Qt.TransformationMode.SmoothTransformation)
     fill = image_array(restored)[:,:,:3].astype(np.float32)
     alpha = coverage[y:y+height,x:x+width,None].astype(np.float32)/255
@@ -165,6 +195,8 @@ def run_job(request_path):
     import onnxruntime as ort
     request = json.loads(Path(request_path).read_text())
     active_id = request.get('model_id',DEFAULT_MODEL)
+    from .diagnostics import event
+    event('inference_requested',model=active_id,replay_passes=len(request.get('replay',[])),has_mask=bool(request.get('mask')))
     get_model(active_id)
     replay = request.get('replay',[])
     replay_models = request.get('replay_models') or [DEFAULT_MODEL]*len(replay)
@@ -209,6 +241,9 @@ def worker_main(arguments):
     app = QCoreApplication.instance() or QCoreApplication(['PhotoPrep worker'])
     app.setOrganizationName('sirdimitry')
     app.setApplicationName('PhotoPrep')
+    from .diagnostics import install,event,error
+    install()
+    event('worker_started',command=arguments[0] if arguments else 'missing')
     try:
         command,path = arguments
         if command=='download':
@@ -222,13 +257,15 @@ def worker_main(arguments):
             run_job(path)
         else:
             return 2
+        event('worker_finished',command=command,status=0)
         return 0
     except Exception as exc:
+        error('worker_failed',exc,command=arguments[0] if arguments else 'missing')
         # Return only known user-facing codes; paths and native internals stay local.
         code = str(exc)
         allowed = {'model_download_error','model_integrity_error','empty_mask','inference_image_error',
                    'inference_image_large','inference_output_error','unknown_model','model_busy',
-                   'export_failed','export_pending_mask','export_size_large','export_source_changed','logo_invalid'}
+                   'model_incompatible','sdxl_runtime_missing','sdxl_requires_mps','sdxl_memory_error','model_disk_space','export_failed','export_pending_mask','export_size_large','export_source_changed','logo_invalid'}
         print(json.dumps({'error':code if code in allowed else 'model_download_error' if arguments and arguments[0]=='download' else 'export_failed' if arguments and arguments[0]=='export' else 'inference_error'}),flush=True)
         return 1
 
@@ -253,7 +290,10 @@ def inventory(directory=None):
     for model_id,spec in MODELS.items():
         path = Path(directory)/spec.filename if directory is not None else model_path(model_id)
         try:
-            size = path.stat().st_size if path.is_file() and not path.is_symlink() else 0
+            if spec.files:
+                from .sdxl_store import disk_bytes
+                size=disk_bytes(path,spec)
+            else:size = path.stat().st_size if path.is_file() and not path.is_symlink() else 0
         except OSError:
             size = 0
         result[model_id] = {'state':'ready' if model_verified(path,model_id) else 'damaged' if path.exists() else 'absent','bytes':size}
@@ -266,16 +306,22 @@ def catalog_job(request_path):
     directory = request.get('directory')
     if action!='inspect':
         model_id = request['model_id']
-        get_model(model_id)
+        spec=get_model(model_id)
         path = Path(directory)/get_model(model_id).filename if directory is not None else model_path(model_id)
         if action=='download':
             try:
                 download_model(path,model_id,force=request.get('force',False))
             except OSError as exc:
                 raise ValueError('model_download_error') from exc
+        elif action=='import':
+            from .model_import import install_local
+            install_local(request['source'],path,spec,progress)
         elif action=='delete':
             with model_lock(path):
-                path.unlink(missing_ok=True)
+                if spec.files:
+                    from .sdxl_store import delete
+                    delete(path,spec)
+                else:path.unlink(missing_ok=True)
                 path.with_suffix('.onnx.part').unlink(missing_ok=True)
                 for partial in path.parent.glob(path.name+'.*.part'):
                     if partial.is_file() or partial.is_symlink():
@@ -291,7 +337,11 @@ def cleanup_download(path,pid):
     if pid:
         path = Path(path)
         try:
-            path.with_name(path.name+f'.{pid}.part').unlink(missing_ok=True)
+            partial=path.with_name(path.name+f'.{pid}.part')
+            if partial.is_dir() and not partial.is_symlink():
+                import shutil
+                shutil.rmtree(partial)
+            else:partial.unlink(missing_ok=True)
         except OSError:
             pass
 
@@ -308,9 +358,14 @@ def create_predictor(paths):
     def predictor(model_id):
         nonlocal session,session_id
         if session_id!=model_id:
+            if hasattr(session,'close'):session.close()
             session = None  # release the previous model before allocating another
-            session = ort.InferenceSession(str(paths[model_id]),sess_options=options,providers=['CPUExecutionProvider'])
+            if get_model(model_id).backend=='diffusers':
+                from .sdxl import SDXLPredictor
+                session=SDXLPredictor(paths[model_id])
+            else:session = ort.InferenceSession(str(paths[model_id]),sess_options=options,providers=['CPUExecutionProvider'])
             session_id = model_id
+        if get_model(model_id).backend=='diffusers':return session
         def predict(image,mask):
             if model_id=='migan':
                 import numpy as np

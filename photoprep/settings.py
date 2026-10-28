@@ -67,6 +67,17 @@ class Preferences:
         get_model(value)
         self._q.setValue('ai/model',value)
 
+    def model_source(self,model_id):
+        from .catalog import get_model
+        get_model(model_id)
+        value=self._q.value('models/local_source/'+model_id,'')
+        return value if isinstance(value,str) and '\x00' not in value else ''
+
+    def set_model_source(self,model_id,value):
+        from .catalog import get_model
+        get_model(model_id)
+        self._q.setValue('models/local_source/'+model_id,str(value))
+
     @property
     def logo_folder(self):
         value=self._q.value('branding/logo_folder','')

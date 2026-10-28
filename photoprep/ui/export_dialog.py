@@ -12,6 +12,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,
     QPushButton,QRadioButton,QButtonGroup,QSlider,QProgressBar,QApplication)
 
+from ..diagnostics import event,error as log_error
 from ..catalog import MODELS
 from ..exporting import signature,cleanup_partial,MAX_PIXELS
 from ..inference import storage_root,model_path,cleanup_download
@@ -132,7 +133,7 @@ class ExportDialog(QDialog):
             process=QProcess(self);self.process=process
             process.started.connect(lambda:setattr(self,'_pid',process.processId()))
             process.readyReadStandardOutput.connect(self._read)
-            process.readyReadStandardError.connect(lambda:process.readAllStandardError())
+            process.readyReadStandardError.connect(self._stderr)
             process.finished.connect(self._finished)
             process.errorOccurred.connect(lambda error:self._finished(1,QProcess.ExitStatus.CrashExit) if error==QProcess.ProcessError.FailedToStart else None)
             args=['--photoprep-worker','export',str(path)]
@@ -141,7 +142,13 @@ class ExportDialog(QDialog):
             for widget in (self.current,self.all,*self.formats.values()):widget.setEnabled(False)
             self.progress.show();self.validate();process.start()
         except (OSError,ValueError) as exc:
+            log_error('export_job_start_failed',exc)
             self._error=str(exc) if isinstance(exc,SessionError) else 'export_failed';self._cleanup();self.status.setText(self.t(self._error))
+
+    def _stderr(self):
+        if self.process:
+            text=bytes(self.process.readAllStandardError()).decode('utf-8',errors='replace')
+            if text.strip():event('child_stderr',component=type(self).__name__,detail=text[-16000:])
 
     def _read(self):
         if not self.process:return
@@ -165,7 +172,7 @@ class ExportDialog(QDialog):
 
     def _finished(self,code,status):
         if not self.process:return
-        self._read();process,self.process=self.process,None;process.deleteLater();self._finished_once=True
+        self._read();event('child_finished',component=type(self).__name__,status=code,exit_status=str(status),error=self._error);process,self.process=self.process,None;process.deleteLater();self._finished_once=True
         self._cleanup();self.close_button.setText(self.t('close'));self.open_folder.setVisible(bool(self.files))
         self.progress.setValue(100 if not self._cancelled and code==0 else self.progress.value())
         if self._cancelled:self.status.setText(self.t('export_cancelled',count=len(self.files)))
