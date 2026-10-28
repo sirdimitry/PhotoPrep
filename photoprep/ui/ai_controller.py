@@ -11,7 +11,8 @@ import tempfile
 from PySide6.QtCore import QObject, QProcess, Signal
 from PySide6.QtGui import QImage
 
-from ..inference import MODEL_SIZE, model_path, storage_root
+from ..catalog import DEFAULT_MODEL, get_model
+from ..inference import model_path, storage_root, cleanup_download
 
 
 class AIController(QObject):
@@ -31,58 +32,81 @@ class AIController(QObject):
         self._context = None
         self._command = None
         self._pending = None
-        self._redownload = False
+        self._redownload = set()
+        self._downloads = []
+        self._download_id = None
+        self._failed_model = None
+        self._child_pid = 0
 
     @property
     def busy(self):
         return self.process is not None
 
-    def start(self,source,mask,context,*,base_image=None,replay=()):
+    def start(self,source,mask,context,*,base_image=None,replay=(),model_id=DEFAULT_MODEL,replay_models=()):
         if self.busy:
             return
         try:
+            get_model(model_id)
+            replay_models = replay_models or (DEFAULT_MODEL,)*len(replay)
+            if len(replay_models)!=len(replay):
+                raise ValueError('unknown_model')
+            required = tuple(dict.fromkeys((*replay_models,*((model_id,) if mask is not None else ()))))
+            for item in required:
+                get_model(item)
             cache = storage_root()/'work'/'ai-jobs'
             cache.mkdir(parents=True,exist_ok=True)
             self._directory = Path(tempfile.mkdtemp(prefix='job-',dir=cache))
             self._context = context
             if mask is not None and not mask.save(str(self._directory/'mask.png'),'PNG'):
-                self._cleanup()
-                self.failed.emit('inference_output_error')
-                return
+                raise OSError('Could not stage mask')
             if base_image is not None:
                 source = self._directory/'base.png'
                 if not base_image.save(str(source),'PNG'):
                     raise OSError('Could not stage base preview')
-            request = {'source':str(source),'model':str(model_path()),
+            request = {'source':str(source),'model_id':model_id,
+                       'model_paths':{item:str(model_path(item)) for item in required},
                        'mask':str(self._directory/'mask.png') if mask is not None else None,
                        'replay':[[asdict(stroke) for stroke in group] for group in replay],
-                       'output':str(self._directory/'result.png')}
+                       'replay_models':list(replay_models),'output':str(self._directory/'result.png')}
             path = self._directory/'request.json'
             path.write_text(json.dumps(request))
             self._pending = path
-            model = model_path()
-            # Full SHA256 verification takes place in the worker before every inference.
-            if self._redownload or not model.is_file() or model.stat().st_size!=MODEL_SIZE or model.is_symlink():
-                self._launch('download',model)
-            else:
-                self._launch('inpaint',path)
-        except OSError:
+            self._downloads = []
+            for item in required:
+                model = model_path(item)
+                if item in self._redownload or not model.is_file() or model.is_symlink() or model.stat().st_size!=get_model(item).size:
+                    self._downloads.append(item)
+            self._next()
+        except (OSError,ValueError) as exc:
             self._cleanup()
-            self.failed.emit('inference_output_error')
+            self.failed.emit('unknown_model' if isinstance(exc,ValueError) else 'inference_output_error')
             self.changed.emit()
+
+    def _next(self):
+        if self._downloads:
+            self._download_id = self._downloads.pop(0)
+            path = self._directory/'download.json'
+            path.write_text(json.dumps({'action':'download','model_id':self._download_id,'directory':str(model_path(self._download_id).parent),'force':self._download_id in self._redownload}))
+            self._launch('download',path)
+        else:
+            self._download_id = None
+            self._launch('inpaint',self._pending)
 
     def _launch(self,command,path):
         self._command = command
         self._buffer = b''
         self._error = None
+        self._failed_model = None
+        self._child_pid = 0
         self._cancelled = False
         process = QProcess(self)
         self.process = process
+        process.started.connect(lambda:setattr(self,'_child_pid',process.processId()))
         process.readyReadStandardOutput.connect(self._read)
         process.readyReadStandardError.connect(lambda:process.readAllStandardError())
         process.finished.connect(self._finished)
         process.errorOccurred.connect(self._process_error)
-        arguments = ['--photoprep-worker',command,str(path)]
+        arguments = ['--photoprep-worker','catalog' if command=='download' else command,str(path)]
         if not getattr(sys,'frozen',False):
             arguments = ['-m','photoprep',*arguments]
         process.setProgram(sys.executable)
@@ -102,6 +126,7 @@ class AIController(QObject):
                 data = json.loads(line)
                 if 'error' in data:
                     self._error = data['error']
+                    self._failed_model = data.get('model_id',self._failed_model)
                 elif 'stage' in data:
                     self.progress.emit(data['stage'],data.get('percent',0))
             except (ValueError,TypeError):
@@ -123,8 +148,8 @@ class AIController(QObject):
             self.changed.emit()
             return
         if code==0 and status==QProcess.ExitStatus.NormalExit and self._command=='download':
-            self._redownload = False
-            self._launch('inpaint',self._pending)
+            self._redownload.discard(self._download_id)
+            self._next()
             return
         if code==0 and status==QProcess.ExitStatus.NormalExit:
             image = QImage(str(self._directory/'result.png'))
@@ -136,7 +161,8 @@ class AIController(QObject):
                 self.completed.emit(context,image)
         else:
             error = self._error or ('model_download_error' if self._command=='download' else 'inference_error')
-            self._redownload = error=="model_integrity_error"
+            if error=='model_integrity_error':
+                self._redownload.add(self._failed_model or self._download_id or DEFAULT_MODEL)
             self._cleanup()
             self.failed.emit(error)
         self.changed.emit()
@@ -154,10 +180,11 @@ class AIController(QObject):
             self._cleanup()
 
     def _cleanup(self):
+        if self._command=='download' and self._download_id:
+            cleanup_download(model_path(self._download_id),self._child_pid)
         if self._directory:
             shutil.rmtree(self._directory,ignore_errors=True)
             self._directory = None
-        if self._command=='download':
-            model_path().with_suffix('.onnx.part').unlink(missing_ok=True)
         self._pending = None
         self._context = None
+        self._downloads = []

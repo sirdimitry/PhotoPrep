@@ -50,8 +50,9 @@ def test_empty_mask_and_bad_model_output_are_rejected():
 
 def test_model_download_is_pinned_atomic_and_verified(tmp_path,monkeypatch):
     data=b'verified test model bytes'
-    monkeypatch.setattr(ai,'MODEL_SIZE',len(data))
-    monkeypatch.setattr(ai,'MODEL_SHA256',hashlib.sha256(data).hexdigest())
+    from dataclasses import replace
+    from photoprep.catalog import MODELS
+    monkeypatch.setitem(MODELS,'lama',replace(MODELS['lama'],size=len(data),sha256=hashlib.sha256(data).hexdigest()))
     target=tmp_path/'model.onnx'
     class Response(BytesIO):
         url='https://public-model.example/file'
@@ -89,7 +90,7 @@ def test_cancel_child_process_cleans_temporary_private_files(tmp_path,monkeypatc
     app=QApplication.instance() or QApplication([])
     import photoprep.ui.ai_controller as module
     monkeypatch.setattr(module,'storage_root',lambda:tmp_path)
-    monkeypatch.setattr(module,'model_path',lambda:tmp_path/'model.onnx')
+    monkeypatch.setattr(module,'model_path',lambda *args:tmp_path/'model.onnx')
     class SlowProcess(QProcess):
         def start(self):
             import sys
@@ -107,9 +108,9 @@ def test_cancel_child_process_cleans_temporary_private_files(tmp_path,monkeypatc
     controller.start(source,render_mask(40,30,(MaskStroke(((.5,.5),),.2),)),('context',))
     directory=controller._directory
     assert directory.is_dir() and (directory/'mask.png').exists()
-    partial=tmp_path/"model.onnx.part"
-    partial.write_bytes(b"incomplete download")
     QTest.qWait(50)
+    partial=tmp_path/f"model.onnx.{controller._child_pid}.part"
+    partial.write_bytes(b"incomplete download")
     controller.cancel()
     end=time.monotonic()+5
     while controller.busy and time.monotonic()<end:QTest.qWait(10)

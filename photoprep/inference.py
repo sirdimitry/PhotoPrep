@@ -8,6 +8,9 @@ from pathlib import Path
 import sys
 import ssl
 import urllib.request
+from contextlib import contextmanager
+
+from .catalog import DEFAULT_MODEL, MODELS, get_model
 
 MODEL_REVISION = 'c3c0c9e468934d62e79c329e35d82dd09ff8c444'
 MODEL_NAME = 'lama_fp32.onnx'
@@ -23,20 +26,21 @@ def storage_root():
     return Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation))
 
 
-def model_path():
-    return storage_root() / 'models' / MODEL_NAME
+def model_path(model_id=DEFAULT_MODEL):
+    return storage_root() / 'models' / get_model(model_id).filename
 
 
-def model_verified(path):
+def model_verified(path,model_id=DEFAULT_MODEL):
+    spec = get_model(model_id)
     path = Path(path)
     try:
-        if not path.is_file() or path.is_symlink() or path.stat().st_size != MODEL_SIZE:
+        if not path.is_file() or path.is_symlink() or path.stat().st_size != spec.size:
             return False
         digest = hashlib.sha256()
         with path.open('rb') as stream:
             for chunk in iter(lambda:stream.read(1024*1024), b''):
                 digest.update(chunk)
-        return digest.hexdigest() == MODEL_SHA256
+        return digest.hexdigest() == spec.sha256
     except OSError:
         return False
 
@@ -45,29 +49,35 @@ def progress(stage, percent=0):
     print(json.dumps({'stage':stage, 'percent':percent}), flush=True)
 
 
-def download_model(target):
+def download_model(target,model_id=DEFAULT_MODEL,*,force=False):
     """Only retrieve the pinned public model; no tokens, cookies or user data."""
     import certifi
+    spec = get_model(model_id)
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
-    if model_verified(target):
+    if not force and model_verified(target,model_id):
         return
-    partial = target.with_suffix('.onnx.part')
+    with model_lock(target):
+        _download_locked(target,spec,certifi)
+
+
+def _download_locked(target,spec,certifi):
+    partial = target.with_name(target.name+f'.{os.getpid()}.part')
     partial.unlink(missing_ok=True)
     digest, received = hashlib.sha256(), 0
     try:
-        request = urllib.request.Request(MODEL_URL, headers={'User-Agent':'PhotoPrep-model-download'})
+        request = urllib.request.Request(spec.url, headers={'User-Agent':'PhotoPrep-model-download'})
         with urllib.request.urlopen(request, timeout=30, context=ssl.create_default_context(cafile=certifi.where())) as response, partial.open('xb') as stream:
             if not response.url.startswith('https://'):
                 raise ValueError('model_download_error')
             for chunk in iter(lambda:response.read(1024*1024), b''):
                 received += len(chunk)
-                if received > MODEL_SIZE:
+                if received > spec.size:
                     raise ValueError('model_integrity_error')
                 stream.write(chunk)
                 digest.update(chunk)
-                progress('downloading', round(received*100/MODEL_SIZE))
-        if received != MODEL_SIZE or digest.hexdigest() != MODEL_SHA256:
+                progress('downloading', round(received*100/spec.size))
+        if received != spec.size or digest.hexdigest() != spec.sha256:
             raise ValueError('model_integrity_error')
         os.replace(partial, target)
     finally:
@@ -152,10 +162,19 @@ def run_job(request_path):
     from PySide6.QtGui import QImage, QImageReader
     import onnxruntime as ort
     request = json.loads(Path(request_path).read_text())
-    model = Path(request['model'])
+    active_id = request.get('model_id',DEFAULT_MODEL)
+    get_model(active_id)
+    replay = request.get('replay',[])
+    replay_models = request.get('replay_models') or [DEFAULT_MODEL]*len(replay)
+    if len(replay_models)!=len(replay) or len(replay)>100:
+        raise ValueError('inference_image_error')
+    ids = set(replay_models + ([active_id] if request.get('mask') else []))
+    paths = {model_id:Path(request.get('model_paths',{}).get(model_id,request.get('model',model_path(model_id)))) for model_id in ids}
     progress('verifying')
-    if not model_verified(model):
-        raise ValueError('model_integrity_error')
+    for model_id,path in paths.items():
+        if not model_verified(path,model_id):
+            print(json.dumps({'error':'model_integrity_error','model_id':model_id}),flush=True)
+            raise ValueError('model_integrity_error')
     reader = QImageReader(request['source'])
     reader.setAutoTransform(True)
     size = reader.size()
@@ -168,9 +187,23 @@ def run_job(request_path):
     options.inter_op_num_threads = 1
     options.add_session_config_entry('session.intra_op.allow_spinning','0')
     options.log_severity_level = 3
-    session = ort.InferenceSession(str(model),sess_options=options,providers=['CPUExecutionProvider'])
-    def predict(image,mask):
-        return session.run(None,{'image':image,'mask':mask})[0]
+    session = None
+    session_id = None
+    def predictor(model_id):
+        nonlocal session,session_id
+        if session_id!=model_id:
+            session = None  # release the previous model before allocating another
+            session = ort.InferenceSession(str(paths[model_id]),sess_options=options,providers=['CPUExecutionProvider'])
+            session_id = model_id
+        def predict(image,mask):
+            if model_id=='migan':
+                import numpy as np
+                values = {'image':np.rint(image*255).astype(np.uint8),
+                          'mask':np.rint((1-mask)*255).astype(np.uint8)}
+            else:
+                values = {'image':image,'mask':mask}
+            return session.run(None,values)[0]
+        return predict
     from .editing import MaskStroke, render_mask
     result = source
     replay = request.get('replay',[])
@@ -179,10 +212,10 @@ def run_job(request_path):
     for index,group in enumerate(replay):
         strokes = tuple(MaskStroke(tuple(tuple(point) for point in item['points']),item['width'],item.get('erase',False)) for item in group)
         mask = render_mask(result.width(),result.height(),strokes)
-        result = inpaint(result,mask,predict)
+        result = inpaint(result,mask,predictor(replay_models[index]))
         progress('processing',round((index+1)*100/(len(replay)+bool(request.get('mask')))))
     if request.get('mask'):
-        result = inpaint(result,QImage(request['mask']),predict)
+        result = inpaint(result,QImage(request['mask']),predictor(active_id))
     elif not replay:
         raise ValueError('empty_mask')
     if not result.save(request['output'],'PNG'):
@@ -193,10 +226,14 @@ def run_job(request_path):
 def worker_main(arguments):
     from PySide6.QtCore import QCoreApplication
     app = QCoreApplication.instance() or QCoreApplication(['PhotoPrep worker'])
+    app.setOrganizationName('sirdimitry')
+    app.setApplicationName('PhotoPrep')
     try:
         command,path = arguments
         if command=='download':
             download_model(path)
+        elif command=='catalog':
+            catalog_job(path)
         elif command=='inpaint':
             run_job(path)
         else:
@@ -206,6 +243,66 @@ def worker_main(arguments):
         # Return only known user-facing codes; paths and native internals stay local.
         code = str(exc)
         allowed = {'model_download_error','model_integrity_error','empty_mask','inference_image_error',
-                   'inference_image_large','inference_output_error'}
+                   'inference_image_large','inference_output_error','unknown_model','model_busy'}
         print(json.dumps({'error':code if code in allowed else 'model_download_error' if arguments and arguments[0]=='download' else 'inference_error'}),flush=True)
         return 1
+
+
+@contextmanager
+def model_lock(path):
+    from PySide6.QtCore import QLockFile
+    path = Path(path)
+    path.parent.mkdir(parents=True,exist_ok=True)
+    lock = QLockFile(str(path)+'.lock')
+    lock.setStaleLockTime(0)
+    if not lock.tryLock(0):
+        raise ValueError('model_busy')
+    try:
+        yield
+    finally:
+        lock.unlock()
+
+
+def inventory(directory=None):
+    result = {}
+    for model_id,spec in MODELS.items():
+        path = Path(directory)/spec.filename if directory is not None else model_path(model_id)
+        try:
+            size = path.stat().st_size if path.is_file() and not path.is_symlink() else 0
+        except OSError:
+            size = 0
+        result[model_id] = {'state':'ready' if model_verified(path,model_id) else 'damaged' if path.exists() else 'absent','bytes':size}
+    return result
+
+
+def catalog_job(request_path):
+    request = json.loads(Path(request_path).read_text())
+    action = request['action']
+    directory = request.get('directory')
+    if action!='inspect':
+        model_id = request['model_id']
+        get_model(model_id)
+        path = Path(directory)/get_model(model_id).filename if directory is not None else model_path(model_id)
+        if action=='download':
+            download_model(path,model_id,force=request.get('force',False))
+        elif action=='delete':
+            with model_lock(path):
+                path.unlink(missing_ok=True)
+                path.with_suffix('.onnx.part').unlink(missing_ok=True)
+                for partial in path.parent.glob(path.name+'.*.part'):
+                    if partial.is_file() or partial.is_symlink():
+                        partial.unlink()
+        elif action=='verify':
+            progress('verifying')
+        else:
+            raise ValueError('unknown_model')
+    print(json.dumps({'inventory':inventory(directory)}),flush=True)
+
+
+def cleanup_download(path,pid):
+    if pid:
+        path = Path(path)
+        try:
+            path.with_name(path.name+f'.{pid}.part').unlink(missing_ok=True)
+        except OSError:
+            pass

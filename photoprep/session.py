@@ -9,6 +9,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QIODevice, QSaveFile, QFileDevice
 
+from .catalog import MODELS
 from .models import Photo
 from .editing import PhotoEdits, MaskStroke, CropRect, fit_crop
 from .workspace import ViewState, Workspace
@@ -30,8 +31,10 @@ def save_session(path: Path, workspace: Workspace) -> None:
             return str(photo_path)
     if sum(len(stroke.points) for edits in workspace.edits.values() for group in (edits.strokes,*edits.passes) for stroke in group) > 200000 or any(len(edits.passes)>100 for edits in workspace.edits.values()):
         raise SessionError("session_too_large")
+    if any((edits.pass_models and len(edits.pass_models)!=len(edits.passes)) or any(model not in MODELS for model in edits.models_for_passes) for edits in workspace.edits.values()):
+        raise SessionError("session_invalid")
     document = {
-        'format': 'PhotoPrep', 'version': 3 if any(edits.passes for edits in workspace.edits.values()) else 2,
+        'format': 'PhotoPrep', 'version': 4 if any(any(model!='lama' for model in edits.models_for_passes) for edits in workspace.edits.values()) else 3 if any(edits.passes for edits in workspace.edits.values()) else 2,
         'output_size': [workspace.output_width, workspace.output_height],
         'selected': relative(workspace.selected) if workspace.selected else None,
         'photos': [{'path': relative(photo.path),
@@ -114,7 +117,12 @@ def _edits(value) -> PhotoEdits:
             raise ValueError()
         if count + sum(len(stroke.points) for group in passes for stroke in group)>200000:
             raise SessionError('session_too_large')
-        return PhotoEdits(tuple(strokes),crop,passes)
+        pass_models = value.get('pass_models',[])
+        if not isinstance(pass_models,list) or (pass_models and len(pass_models)!=len(passes)):
+            raise ValueError()
+        if any(not isinstance(model,str) or model not in MODELS for model in pass_models):
+            raise ValueError()
+        return PhotoEdits(tuple(strokes),crop,passes,tuple(pass_models))
     except SessionError:
         raise
     except (TypeError,ValueError,KeyError,OverflowError) as exc:
@@ -133,7 +141,7 @@ def load_session(path: Path) -> tuple[Workspace, int]:
     except (ValueError, UnicodeError, RecursionError) as exc:
         raise SessionError('session_invalid') from exc
     if (not isinstance(document, dict) or document.get('format') != 'PhotoPrep'
-            or type(document.get('version')) is not int or document['version'] not in (1,2,3)
+            or type(document.get('version')) is not int or document['version'] not in (1,2,3,4)
             or not isinstance(document.get('photos'), list)):
         raise SessionError('session_invalid')
     if len(document['photos']) > MAX_PHOTOS:

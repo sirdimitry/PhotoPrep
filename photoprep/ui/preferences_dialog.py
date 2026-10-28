@@ -6,12 +6,13 @@ from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QLineEdit, QButtonGroup, QDialog, QDialogButtonBox, QFrame,
     QGridLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton,
-    QVBoxLayout, QToolButton, QSizePolicy,
+    QVBoxLayout, QToolButton, QSizePolicy, QTabWidget, QWidget,
 )
 
 from ..i18n import tr
 from ..settings import Preferences
 from .theme import stylesheet
+from .model_manager import ModelManager
 
 
 class DimensionInput(QLineEdit):
@@ -42,8 +43,17 @@ class PreferencesDialog(QDialog):
         self.settings = settings
         self.setStyleSheet(stylesheet(settings.appearance))
         self.setFixedWidth(520)
-        root = QVBoxLayout(self)
-        root.setContentsMargins(24, 24, 24, 22)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(16,16,16,16)
+        outer.setSpacing(14)
+        self.tabs = QTabWidget()
+        general_page = QWidget()
+        root = QVBoxLayout(general_page)
+        self.tabs.addTab(general_page,'')
+        self.models = ModelManager(settings,self)
+        self.tabs.addTab(self.models,'')
+        outer.addWidget(self.tabs)
+        root.setContentsMargins(8,8,8,8)
         root.setSpacing(20)
 
         self.general = QGroupBox()
@@ -125,7 +135,8 @@ class PreferencesDialog(QDialog):
             button.setMinimumSize(112, 40)
         self.buttons.accepted.connect(self.apply_and_close)
         self.buttons.rejected.connect(self.reject)
-        root.addWidget(self.buttons)
+        outer.addWidget(self.buttons)
+        self.models.changed.connect(self._validate)
         for field in (self.width_input, self.height_input):
             field.textChanged.connect(self._validate)
         self._validate()
@@ -133,7 +144,7 @@ class PreferencesDialog(QDialog):
 
     def _validate(self):
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(
-            self.width_input.hasAcceptableInput() and self.height_input.hasAcceptableInput())
+            self.width_input.hasAcceptableInput() and self.height_input.hasAcceptableInput() and not self.models.busy)
 
     @property
     def selected_language(self):
@@ -152,6 +163,9 @@ class PreferencesDialog(QDialog):
     def retranslate(self):
         t = lambda key: tr(self.selected_language, key)
         self.setWindowTitle(t("preferences_title"))
+        self.tabs.setTabText(0,t("general"))
+        self.tabs.setTabText(1,t("models_tab"))
+        self.models.retranslate(self.selected_language)
         self.general.setTitle(t("general"))
         self.language_label.setText(t("language"))
         self.appearance_label.setText(t('appearance'))
@@ -165,11 +179,16 @@ class PreferencesDialog(QDialog):
         self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(t("cancel"))
 
     def apply_and_close(self):
-        if not (self.width_input.hasAcceptableInput() and self.height_input.hasAcceptableInput()):
+        if self.models.busy or not (self.width_input.hasAcceptableInput() and self.height_input.hasAcceptableInput()):
             return
+        self.settings.model_id = self.models.selected_model
         self.settings.appearance = self.selected_appearance
         self.settings.language = self.selected_language
         self.settings.output_width = self.width_input.value()
         self.settings.output_height = self.height_input.value()
         self.applied.emit()
         self.accept()
+
+    def done(self,result):
+        self.models.shutdown()
+        super().done(result)

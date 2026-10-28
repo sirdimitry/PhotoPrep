@@ -54,3 +54,15 @@ class Preferences:
         if value not in ("dark", "light"):
             raise ValueError("Unsupported appearance")
         self._q.setValue("ui/appearance", value)
+
+    @property
+    def model_id(self):
+        from .catalog import MODELS, DEFAULT_MODEL
+        value = self._q.value('ai/model',DEFAULT_MODEL)
+        return value if isinstance(value,str) and value in MODELS else DEFAULT_MODEL
+
+    @model_id.setter
+    def model_id(self,value):
+        from .catalog import get_model
+        get_model(value)
+        self._q.setValue('ai/model',value)

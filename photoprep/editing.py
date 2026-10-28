@@ -31,6 +31,11 @@ class PhotoEdits:
     strokes: tuple[MaskStroke, ...] = ()
     crop: CropRect | None = None
     passes: tuple[tuple[MaskStroke, ...], ...] = ()  # successful passes; strokes is the next mask
+    pass_models: tuple[str, ...] = ()
+
+    @property
+    def models_for_passes(self):
+        return self.pass_models or ('lama',)*len(self.passes)
 
 
 def fit_crop(width: int, height: int, ratio: float, existing: CropRect | None = None) -> CropRect:

@@ -137,7 +137,7 @@ def test_controller_stages_previous_pixels_and_replay_privately(tmp_path,monkeyp
     from photoprep.ui import ai_controller as module
     app=QApplication.instance() or QApplication([])
     monkeypatch.setattr(module,'storage_root',lambda:tmp_path)
-    monkeypatch.setattr(module,'model_path',lambda:tmp_path/'model.onnx')
+    monkeypatch.setattr(module,'model_path',lambda *args:tmp_path/'model.onnx')
     controller=module.AIController()
     monkeypatch.setattr(controller,'_launch',lambda *args:None)
     image=QImage(40,30,QImage.Format.Format_RGBA8888);image.fill(Qt.GlobalColor.green)

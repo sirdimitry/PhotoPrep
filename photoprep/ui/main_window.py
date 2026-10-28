@@ -31,6 +31,7 @@ from .filmstrip import FilmstripDelegate
 from .widgets import PhotoNameLabel
 from .ai_controller import AIController
 from ..inference import model_path
+from ..catalog import get_model
 
 
 class DropSurface(QFrame):
@@ -516,10 +517,10 @@ class MainWindow(QMainWindow):
         except OSError:
             return None
         edits = edits or self.workspace.edits.get(path,PhotoEdits())
-        return path,stat.st_mtime_ns,stat.st_size,edits.passes
+        return path,stat.st_mtime_ns,stat.st_size,edits.passes,edits.models_for_passes
 
     def _job_key(self):
-        return self._preview_key(),self.workspace.edits.get(self.workspace.selected,PhotoEdits()).strokes
+        return self._preview_key(),self.workspace.edits.get(self.workspace.selected,PhotoEdits()).strokes,self.settings.model_id
 
     def _current_preview(self):
         return self._previews.get(self._preview_key())
@@ -560,7 +561,7 @@ class MainWindow(QMainWindow):
         base = self._current_preview()
         self._show_preview(base is not None)
         self._select_tool('select')
-        self.ai.start(photo.path,mask,self._job_key(),base_image=base,replay=edits.passes if base is None else ())
+        self.ai.start(photo.path,mask,self._job_key(),base_image=base,replay=edits.passes if base is None else (),model_id=self.settings.model_id,replay_models=edits.models_for_passes if base is None else ())
 
     def _cancel_ai(self):
         self._ai_stage = 'cancelled'
@@ -568,7 +569,7 @@ class MainWindow(QMainWindow):
 
     def _ai_progress(self,stage,percent):
         self._ai_stage,self._ai_percent = stage,percent
-        self.ai_status.setText(self.t('ai_'+stage,percent=percent))
+        self.ai_status.setText(self.t('ai_'+stage,percent=percent,name=get_model(self.ai._download_id or self.settings.model_id).name))
 
     def _ai_completed(self,key,image):
         self._ai_stage = None
@@ -576,7 +577,7 @@ class MainWindow(QMainWindow):
             return
         edits = self.workspace.edits.get(self.workspace.selected,PhotoEdits())
         if edits.strokes:
-            edits = replace(edits,strokes=(),passes=edits.passes+(edits.strokes,))
+            edits = replace(edits,strokes=(),passes=edits.passes+(edits.strokes,),pass_models=edits.models_for_passes+(self.settings.model_id,))
             self.workspace.set_edits(self.workspace.selected,edits)
             self.canvas.set_edits(edits)
         key = self._preview_key()
@@ -904,7 +905,8 @@ class MainWindow(QMainWindow):
         self.tools['compare'].setEnabled(enabled and preview)
         self.process_button.setEnabled(enabled and (bool(edits.strokes) or (bool(edits.passes) and not preview)))
         self.process_button.setText(self.t('ai_restore' if edits.passes and not preview and not edits.strokes else 'process_mask'))
-        self.process_button.setToolTip(self.t('ai_download_hint') if not model_path().is_file() else '')
+        spec = get_model(self.settings.model_id)
+        self.process_button.setToolTip(self.t('ai_download_hint',name=spec.name,size=f'{spec.size/1e6:.1f}') if not model_path(self.settings.model_id).is_file() else self.t('ai_model_active',name=spec.name))
         self.cancel_ai_button.setVisible(self.ai.busy)
         self.before_button.setEnabled(enabled and preview)
         self.after_button.setEnabled(enabled and preview)
@@ -940,6 +942,7 @@ class MainWindow(QMainWindow):
         dialog = PreferencesDialog(self.settings, self, dimensions=(self.workspace.output_width,self.workspace.output_height))
         dialog.applied.connect(self._preferences_applied)
         dialog.exec()
+        self._refresh_controls()
 
     def _apply_appearance(self):
         appearance = self.settings.appearance

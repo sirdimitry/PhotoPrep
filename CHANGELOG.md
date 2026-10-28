@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.1.0-alpha.8 — 2026-10-28
+
+Stage 5: verified model catalogue and management.
+
+- Add a compact Models tab in bilingual Preferences with LaMa (208.0 MB) and
+  MI-GAN (28.1 MB), installed size, full verification, download, cancel, remove
+  and atomic reinstall. Save commits model selection; file operations act immediately.
+- Keep installed files on interrupted reinstall, use model locks and process-specific
+  partial files so cancelling one process cannot remove another process download.
+- Adapt the MIT-licensed MI-GAN ONNX pipeline to the existing mask-only compositor.
+  Reuse the current Python, ONNX Runtime and dependencies; include the weights licence.
+- Record each pass model and preserve accumulated retouch when switching models.
+  Mixed recipes use session format 4; formats 1/2/3 remain readable. Restore with the
+  original model per pass, downloading missing weights and loading one model at a time.
+- Keep model files outside the repository/package and downloads outside the GUI process.
+
+Validation: 68 tests passed offscreen and with native macOS rendering. Native GUI
+verification exercised delete/download/verify/cancel-reinstall and persisted selection.
+A real LaMa → MI-GAN recipe restored with exactly matching pixels and unchanged source
+file. On the generated test image the passes took about 6.3s and 0.6s respectively;
+these timings are not general performance guarantees. Image export remains pending.
+
 ## v0.1.0-alpha.7 — 2026-10-28
 
 - Accumulate removal passes: draw on the processed image and apply a new mask to

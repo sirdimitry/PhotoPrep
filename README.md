@@ -11,7 +11,7 @@
 ![PhotoPrep — AI cleanup, cropping, branding and batch workflows](assets/github-banner.png)
 
 <p align="center">
-  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.7-FACC15?style=flat-square&labelColor=202227">
+  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.8-FACC15?style=flat-square&labelColor=202227">
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-33373d?style=flat-square">
   <img alt="Language" src="https://img.shields.io/badge/UI-English%20%2B%20Русский-33373d?style=flat-square">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-33373d?style=flat-square"></a>
@@ -21,7 +21,7 @@
 
 **PhotoPrep** is a free, local-first photo preparation app for macOS. Its goal is to simplify repetitive website-image work: mask and remove unwanted logos with local inpainting models, crop to a consistent frame, optionally add your own brand mark, then export clean files without hidden metadata.
 
-**Current status: early alpha / Stage 4.** The present build is a **working desktop workspace**, with an initial local AI preview. Only the features marked *Available now* below are implemented. No external image upload is performed.
+**Current status: early alpha / Stage 5.** The present build is a **working desktop workspace**, with an initial local AI preview. Only the features marked *Available now* below are implemented. No external image upload is performed.
 
 ### Features
 
@@ -36,15 +36,15 @@
 | Default export preset **1136 × 710**, editable in Advanced Preferences | ✅ Saved with workspace; export pending |
 | Always-visible yellow output outline, output-pixel rulers and subtle checkerboard canvas | ✅ Available now |
 | Paint and erase a mask, preview it over the photo | ✅ Available now |
-| Local LaMa removal preview, mask-only compositing, Before/After and cancellation | ✅ Available now |
-| Select and download compatible compact AI models | 🛠 Planned |
+| Local LaMa / MI-GAN removal preview, mask-only compositing, Before/After and cancellation | ✅ Available now |
+| Verified LaMa / MI-GAN catalogue; select, download, check, remove and reinstall | ✅ Available now |
 | Fixed output frame; pan/zoom the photo underneath, fill and center controls | ✅ Saved with workspace; export pending |
 | Add a remembered user logo | 🛠 Planned |
 | Batch JPEG / PNG export, remove EXIF and other metadata | 🛠 Planned |
 
 ### Get it
 
-**[Download v0.1.0-alpha.7 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.7)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
+**[Download v0.1.0-alpha.8 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.8)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
 
 This early alpha is **ad-hoc signed and not notarized**, so macOS may display a security warning. Verified on macOS 27.2 / Apple Silicon; Intel and other macOS versions have not been tested. See [verified changes](CHANGELOG.md).
 
@@ -78,13 +78,13 @@ Requires **Python 3.11+** and installs **PySide6**. The application does not dow
 | Fit photo in view | `⌘ 0` |
 | Actual pixels (100%) | `⌘ 1` |
 
-Workspace files (`.photoprep.json`) store local image paths and viewing positions, not image copies. Missing sources are reported when reopening; removing a photo from the workspace keeps its original file. Workspace history covers adding/removing photos, mask strokes, removal passes, crop plans and output dimensions. Originals remain read-only. Workspaces with removal passes use session format 3; earlier formats 1/2 remain readable. Alpha.6 and older apps cannot open format 3. Workspaces without removal passes retain format 2.
+Workspace files (`.photoprep.json`) store local image paths and viewing positions, not image copies. Missing sources are reported when reopening; removing a photo from the workspace keeps its original file. Workspace history covers adding/removing photos, mask strokes, removal passes, crop plans and output dimensions. Originals remain read-only. Mixed-model workspaces use session format 4, recording the model for every removal pass. Earlier formats 1/2/3 remain readable. LaMa-only recipes retain format 3; workspaces without removal passes retain format 2. Older apps cannot open format 4.
 
 Tool controls live in the existing inspector, zoom controls sit above the filmstrip, and a shortened photo filename appears beside the app name. Switching tools does not reduce the photo viewport. The output frame stays fixed: drag the photo and scroll to zoom it beneath the frame; output dimensions change only in Settings.
 
-Paint a mask, then choose **Remove selected area** in the inspector. The first run downloads the pinned 208 MB LaMa model from Hugging Face with HTTPS and SHA256 verification. Photos never leave the Mac. Processing runs in a cancellable child process on the CPU; use **Before / After** or the compare icon to switch views. After each successful pass the current mask clears. Paint over the processed image to remove remaining artifacts; each new pass starts from the previous result. Clear mask affects only the next selection. Undo/redo also covers successful removal passes.
+Paint a mask, then choose **Remove selected area** in the inspector. Choose **Preferences → Models** to select LaMa (208.0 MB) or MI-GAN (28.1 MB). Download, check, remove and reinstall each model, or let missing models download on first processing. Downloads use pinned Hugging Face revisions, HTTPS and SHA256 verification. A cancelled reinstall preserves the installed file. Photos never leave the Mac. Processing runs in a cancellable child process on the CPU; use **Before / After** or the compare icon to switch views. After each successful pass the current mask clears. Paint over the processed image to remove remaining artifacts; each new pass starts from the previous result. Clear mask affects only the next selection. Undo/redo also covers successful removal passes.
 
-AI results are temporary previews, limited to images up to 40 megapixels. A 512 × 512 context region is inferred and blended only inside the original full-resolution mask; unmasked pixels and alpha remain unchanged. Results depend on the scene and selection. Removal masks are saved in order. After reopening, **Restore retouch** rebuilds the accumulated result; previews evicted from memory can be restored the same way. Up to 100 removal passes are supported per photo. Crop frames remain saved plans; image export is not implemented. Settings use two language buttons with immediate dialog translation and padded numeric fields.
+AI results are temporary previews, limited to images up to 40 megapixels. A 512 × 512 context region is inferred and blended only inside the original full-resolution mask; unmasked pixels and alpha remain unchanged. Results depend on the scene and selection. Removal masks are saved in order. After reopening, **Restore retouch** rebuilds the accumulated result; previews evicted from memory can be restored the same way. Up to 100 removal passes are supported per photo. Each pass retains its model, so changing the active model does not change earlier retouch. Restoring a recipe downloads any missing models it needs, then loads one model at a time. Crop frames remain saved plans; image export is not implemented. Settings use two language buttons with immediate dialog translation and padded numeric fields.
 
 ### Roadmap
 
@@ -92,8 +92,8 @@ AI results are temporary previews, limited to images up to 40 megapixels. A 512 
 - **Stage 1** — desktop UI, photo import/preview, thumbnails, preferences, bilingual interface. Complete.
 - **Stage 2** — workspace sessions, collection history, background photo decoding and bounded cache. Complete.
 - **Stage 3** — mask painting, eraser, fixed output frame and edit history. Complete.
-- **Stage 4** — LaMa-based local inpainting; preview and masked-only compositing. **Current**.
-- **Stage 5** — curated model catalog and validated downloads from Hugging Face.
+- **Stage 4** — local inpainting, iterative retouch and masked-only compositing. Complete.
+- **Stage 5** — curated model catalogue and validated downloads from Hugging Face. Complete.
 - **Stage 6** — new logo placement, optimized batch output and metadata stripping.
 - **Stage 7** — performance, macOS packaging and release testing.
 

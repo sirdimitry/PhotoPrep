@@ -53,6 +53,13 @@ QGroupBox { border: 1px solid #40434A; border-radius: 8px; margin-top: 12px; pad
 QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; }
 QSplitter::handle { background: #31343A; width: 1px; }
 QScrollArea { background: transparent; border: none; }
+QRadioButton::indicator { width: 12px; height: 12px; border: 1px solid #555B65; border-radius: 7px; background: #30343A; }
+QRadioButton::indicator:checked { background: #FACC15; border-color: #FACC15; }
+QTabWidget::pane { border: 0; }
+QTabBar::tab { background: #30343A; color: #E6E9EC; border: 1px solid #41454D; padding: 7px 16px; }
+QTabBar::tab:selected { background: #48432B; color: #FACC15; border-bottom: 2px solid #FACC15; }
+QProgressBar { border: 1px solid #41454D; border-radius: 4px; background: #292C31; text-align: center; font-size: 10px; }
+QProgressBar::chunk { background: #FACC15; border-radius: 3px; }
 """
 
 
@@ -79,5 +86,5 @@ def stylesheet(appearance='dark'):
     base = STYLESHEET + "\nQFrame#HeaderDivider { background: #373A40; }"
     if appearance == 'light':
         base = re.sub(r'#[0-9A-Fa-f]{6}',lambda match:LIGHT_COLORS.get(match[0],match[0]),base)
-        base += "\nQPushButton#LanguageChoice:checked { color: #725500; }"
+        base += "\nQPushButton#LanguageChoice:checked, QTabBar::tab:selected { color: #725500; }"
     return base
