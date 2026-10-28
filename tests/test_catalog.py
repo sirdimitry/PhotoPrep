@@ -148,3 +148,19 @@ def test_invalid_recipe_model_identifiers_are_rejected(tmp_path,models):
     path=tmp_path/'invalid.photoprep.json'
     path.write_text(json.dumps({'format':'PhotoPrep','version':4,'photos':[{'path':source.name,'edits':{'passes':[[{'points':[[.5,.5]],'width':.1}]],'pass_models':models}}]}))
     with pytest.raises(SessionError):load_session(path)
+
+
+def test_offline_catalog_download_reports_download_error_without_replacing_file(tmp_path,monkeypatch):
+    from urllib.error import URLError
+    application=app()
+    spec=get_model('migan')
+    target=tmp_path/spec.filename;target.write_bytes(b'existing model')
+    request=tmp_path/'request.json'
+    request.write_text(json.dumps({'action':'download','model_id':'migan','directory':str(tmp_path),'force':True}))
+    def offline(*args,**kwargs):
+        raise URLError('offline')
+    monkeypatch.setattr(inference.urllib.request,'urlopen',offline)
+    with pytest.raises(ValueError,match='model_download_error'):
+        inference.catalog_job(request)
+    assert target.read_bytes()==b'existing model'
+    assert not list(tmp_path.glob('*.part'))

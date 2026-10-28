@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.0-alpha.9 — 2026-10-28
+
+- Report first-use download failures as model-download errors, including the
+  automatic download path used by inference. Preserve existing installed weights.
+
+Validation: 69 tests passed offscreen and with native macOS rendering, including
+  an offline download failure without replacing the installed model.
+
 ## v0.1.0-alpha.8 — 2026-10-28
 
 Stage 5: verified model catalogue and management.

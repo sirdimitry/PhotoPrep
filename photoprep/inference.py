@@ -284,7 +284,10 @@ def catalog_job(request_path):
         get_model(model_id)
         path = Path(directory)/get_model(model_id).filename if directory is not None else model_path(model_id)
         if action=='download':
-            download_model(path,model_id,force=request.get('force',False))
+            try:
+                download_model(path,model_id,force=request.get('force',False))
+            except OSError as exc:
+                raise ValueError('model_download_error') from exc
         elif action=='delete':
             with model_lock(path):
                 path.unlink(missing_ok=True)
