@@ -141,22 +141,22 @@ def test_preview_comparison_refinement_and_source_integrity(tmp_path,monkeypatch
         processed=original.copy();processed.fill(Qt.GlobalColor.green)
         window._ai_completed(key,processed)
         window._refresh_controls()
-        assert window.canvas._preview_active and window.after_button.isChecked()
+        assert window.canvas._preview_active and window.tools['compare'].isChecked()
         assert window.tools['compare'].isEnabled()
         view=window.canvas.view_state()
-        window.before_button.click()
+        window.tools['compare'].click()
         assert not window.canvas._preview_active
         assert window.canvas._pixmap_item.pixmap().toImage().pixelColor(1,1)==original.pixelColor(1,1)
-        window.after_button.click()
+        window.tools['compare'].click()
         assert window.canvas._preview_active
         assert window.canvas.view_state()==view
         window._select_tool('mask')
-        assert window.canvas._preview_active and window.after_button.isChecked()
+        assert window.canvas._preview_active and window.tools['compare'].isChecked()
         assert window.canvas._mask_overlay.isVisible()
         edits=PhotoEdits((MaskStroke(((.5,.5),),.1),))
         window._edits_committed(source.resolve(),edits)
         assert window._current_preview() is not None
-        assert window.after_button.isEnabled()
+        assert window.tools['compare'].isEnabled()
         window._ai_completed(key,processed)
         assert window.canvas._preview_active  # stale completion cannot replace a newer mask
         assert window.workspace.edits[source.resolve()]==edits

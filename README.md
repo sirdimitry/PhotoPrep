@@ -11,7 +11,7 @@
 ![PhotoPrep — AI cleanup, cropping, branding and batch workflows](assets/github-banner.png)
 
 <p align="center">
-  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.11-FACC15?style=flat-square&labelColor=202227">
+  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.12-FACC15?style=flat-square&labelColor=202227">
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-33373d?style=flat-square">
   <img alt="Language" src="https://img.shields.io/badge/UI-English%20%2B%20Русский-33373d?style=flat-square">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-33373d?style=flat-square"></a>
@@ -44,7 +44,7 @@
 
 ### Get it
 
-**[Download v0.1.0-alpha.11 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.11)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
+**[Download v0.1.0-alpha.12 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.12)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
 
 This early alpha is **ad-hoc signed and not notarized**, so macOS may display a security warning. Verified on macOS 27.2 / Apple Silicon; Intel and other macOS versions have not been tested. See [verified changes](CHANGELOG.md).
 
@@ -134,13 +134,13 @@ repository.
 
 Logo PNGs are limited to 32 megapixels and 32 MB; missing assets must be relinked.
 
-Choose **Export** (`⌘ Shift E`), current photo or all photos, destination, JPEG/PNG
+Choose **Export** (`⌘ Shift E`), current photo or all photos, JPEG/PNG
 and JPEG quality. Output uses the exact frame dimensions, such as 1136 × 710.
 Applied retouch is restored using each pass's original model; pending masks must
 be applied or cleared first. Source/asset changes during export are reported.
 
-Files are named `original-photoprep.jpg` / `.png`; collisions receive numbered
-suffixes. Atomic exclusive commits never replace existing files or originals.
+Files are named `original-logo.jpg` / `.png`; batches use `-logo01`, `-logo02`,
+and so on. Occupied names are skipped by selecting the next free number. Atomic exclusive commits never replace existing files or originals.
 Export runs sequentially in a child process, keeps one decoded logo/model at a
 time and can be cancelled. Completed files remain; own temporary files are cleaned.
 
@@ -148,3 +148,16 @@ Output is 8-bit JPEG or RGBA PNG in sRGB. JPEG flattens transparency on white.
 Fresh encoders omit source EXIF/GPS, XMP, comments, embedded profiles and source
 text. Colour is converted to sRGB before profiles are stripped. Source files stay
 read-only. Inputs and output dimensions are limited to 40 megapixels per image.
+
+### Export locations and comparison
+
+Export writes next to each original, without creating a destination subfolder.
+A single image uses `photo-logo.jpg` (or `.png`). A batch starts at
+`photo-logo01.jpg`, `other-logo02.jpg`, and so on. If a name exists, the next
+available number is used; existing files are never replaced. Photos from different
+folders are saved in their respective source folders.
+
+The left-side Before/After button is the single comparison control. It becomes
+available for masks, crop plans, retouch, logos and output-size changes. Before
+shows original pixels, hides mask/logo overlays and uses the initial crop guide;
+After restores the planned edits. Switching views does not discard edits.

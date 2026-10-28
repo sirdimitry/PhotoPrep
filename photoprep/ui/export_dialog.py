@@ -9,8 +9,8 @@ import tempfile
 
 from PySide6.QtCore import QProcess,QUrl,Qt
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QGridLayout,QLabel,
-    QPushButton,QRadioButton,QButtonGroup,QLineEdit,QSlider,QProgressBar,QFileDialog,QApplication)
+from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,
+    QPushButton,QRadioButton,QButtonGroup,QSlider,QProgressBar,QApplication)
 
 from ..catalog import MODELS
 from ..exporting import signature,cleanup_partial,MAX_PIXELS
@@ -22,7 +22,7 @@ from .theme import stylesheet
 
 
 class ExportDialog(QDialog):
-    def __init__(self,workspace,settings,parent=None,*,folder=None):
+    def __init__(self,workspace,settings,parent=None):
         super().__init__(parent)
         self.workspace=workspace
         self.settings=settings
@@ -37,6 +37,7 @@ class ExportDialog(QDialog):
         self.files=[]
         self.errors=[]
         self._output_folder=None
+        self._output_folders=set()
         self._model_name=''
         self.setStyleSheet(stylesheet(settings.appearance))
         self.setWindowTitle(self.t('export'))
@@ -62,12 +63,7 @@ class ExportDialog(QDialog):
         self.quality=QSlider(Qt.Orientation.Horizontal);self.quality.setRange(1,100);self.quality.setValue(settings.export_quality)
         self.quality.setMaximumWidth(230);self.quality.valueChanged.connect(self.validate);row.addWidget(self.quality)
         root.addLayout(row)
-        root.addWidget(QLabel(self.t('export_folder')))
-        row=QHBoxLayout()
-        default=Path(folder) if folder else (workspace.selected.parent if workspace.selected else Path.home())/'PhotoPrep Export'
-        self.folder=QLineEdit(str(default));self.folder.textChanged.connect(self.validate)
-        self.browse=QPushButton(self.t('browse'));self.browse.setProperty('compact',True);self.browse.clicked.connect(self.choose_folder)
-        row.addWidget(self.folder,stretch=1);row.addWidget(self.browse);root.addLayout(row)
+        self.destination=QLabel(self.t('export_beside_sources'));self.destination.setWordWrap(True);root.addWidget(self.destination)
         self.note=QLabel(self.t('export_note'));self.note.setWordWrap(True);self.note.setObjectName('SmallHint');root.addWidget(self.note)
         self.progress=QProgressBar();self.progress.setRange(0,100);self.progress.setValue(0);self.progress.hide();root.addWidget(self.progress)
         self.status=QLabel();self.status.setWordWrap(True);self.status.setTextFormat(Qt.TextFormat.PlainText);root.addWidget(self.status)
@@ -92,17 +88,13 @@ class ExportDialog(QDialog):
     def selected_photos(self):
         return self.workspace.photos if self.all.isChecked() else [photo for photo in self.workspace.photos if photo.path==self.workspace.selected]
 
-    def choose_folder(self):
-        folder=QFileDialog.getExistingDirectory(self,self.t('export_folder'),self.folder.text())
-        if folder:self.folder.setText(folder)
-
     def validate(self):
         if not hasattr(self,'start_button'):return
         jpeg=self.formats['JPEG'].isChecked()
         self.quality.setEnabled(jpeg and not self.busy)
         self.quality.setVisible(jpeg);self.quality_label.setVisible(jpeg)
         self.quality_label.setText(self.t('export_quality',quality=self.quality.value()))
-        valid=bool(self.folder.text().strip()) and bool(self.selected_photos)
+        valid=bool(self.selected_photos)
         message=''
         if self.workspace.output_width*self.workspace.output_height>MAX_PIXELS:message='export_size_large'
         elif any(self.workspace.edits[photo.path].strokes for photo in self.selected_photos):message='export_pending_mask'
@@ -113,7 +105,8 @@ class ExportDialog(QDialog):
     def start(self):
         if self.busy or not self.start_button.isEnabled():return
         try:
-            self._output_folder=Path(self.folder.text().strip()).expanduser().resolve()
+            self._output_folders={photo.path.parent for photo in self.selected_photos}
+            self._output_folder=self.selected_photos[0].path.parent
             jobs=storage_root()/'work'/'export-jobs';jobs.mkdir(parents=True,exist_ok=True)
             self._directory=Path(tempfile.mkdtemp(prefix='export-',dir=jobs))
             session=self._directory/'snapshot.photoprep.json'
@@ -130,7 +123,7 @@ class ExportDialog(QDialog):
                 if logo and logo.enabled and logo.opacity>0:logos[logo.path]=signature(logo.path)
             format=next(key for key,button in self.formats.items() if button.isChecked())
             self.settings.export_format=format;self.settings.export_quality=self.quality.value()
-            request={'session':str(session),'sources':sources,'protected':[str(photo.path) for photo in self.workspace.photos],'logos':logos,'models':{key:str(model_path(key)) for key in MODELS},'folder':str(self._output_folder),'format':format,'quality':self.quality.value()}
+            request={'session':str(session),'sources':sources,'protected':[str(photo.path) for photo in self.workspace.photos],'logos':logos,'models':{key:str(model_path(key)) for key in MODELS},'format':format,'quality':self.quality.value()}
             path=self._directory/'request.json';path.write_text(json.dumps(request))
             self._pid=0;self._error=None;self._cancelled=False;self.files=[];self.errors=[];self._buffer=b''
             process=QProcess(self);self.process=process
@@ -142,7 +135,7 @@ class ExportDialog(QDialog):
             args=['--photoprep-worker','export',str(path)]
             if not getattr(sys,'frozen',False):args=['-m','photoprep',*args]
             process.setProgram(sys.executable);process.setArguments(args);process.setWorkingDirectory(str(storage_root()))
-            for widget in (self.current,self.all,*self.formats.values(),self.folder,self.browse):widget.setEnabled(False)
+            for widget in (self.current,self.all,*self.formats.values()):widget.setEnabled(False)
             self.progress.show();self.validate();process.start()
         except (OSError,ValueError) as exc:
             self._error=str(exc) if isinstance(exc,SessionError) else 'export_failed';self._cleanup();self.status.setText(self.t(self._error))
@@ -154,7 +147,9 @@ class ExportDialog(QDialog):
             line,self._buffer=self._buffer.split(b'\n',1)
             try:
                 data=json.loads(line)
-                if 'file' in data:self.files.append(data['file'])
+                if 'file' in data:
+                    self.files.append(data['file'])
+                    if len(self.files)==1:self._output_folder=Path(data['file']).parent
                 if 'file_error' in data:self.errors.append((data['file_error'],data['error']))
                 elif 'error' in data:self._error=data['error']
                 if data.get('stage')=='export_model':self._model_name=data['name']
@@ -181,7 +176,7 @@ class ExportDialog(QDialog):
         else:self.accept()
 
     def _cleanup(self):
-        if self._output_folder:cleanup_partial(self._output_folder,self._pid)
+        for folder in self._output_folders:cleanup_partial(folder,self._pid)
         for key in MODELS:cleanup_download(model_path(key),self._pid)
         if self._directory:shutil.rmtree(self._directory,ignore_errors=True);self._directory=None
 

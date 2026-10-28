@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.1.0-alpha.12 — 2026-10-28
+
+- Export directly beside each source image, without a destination-folder picker
+  or an automatically created export subfolder. Preserve separate source folders
+  in mixed-folder batches and clean only the worker's own temporary files.
+- Name single results `photo-logo.ext`; number batches with `-logo01`, `-logo02`,
+  and so on. Skip occupied names atomically, including concurrent collisions and
+  symlinks, without overwriting originals or earlier results.
+- Remove the duplicate Before/After buttons from the inspector. Keep one
+  checkable comparison control in the left rail, available for masks, crop plans,
+  retouch, logos and output-size changes. Before hides overlays and shows the
+  original crop guide; After restores edits without changing the saved plan.
+
+Validation: 97 tests passed with offscreen and native macOS rendering, both with
+exit status 0. Native GUI single/batch PNG export saved beside different source
+folders, with clean metadata and unchanged source hashes. Naming, collisions,
+comparison overlays/crop guides and normal shutdown were checked.
+
 ## v0.1.0-alpha.11 — 2026-10-28
 
 - Connect a local PNG template folder, prioritizing horizontal 16:9 left and

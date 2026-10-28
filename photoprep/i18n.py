@@ -8,6 +8,9 @@ Language = Literal["en", "ru"]
 
 STRINGS = {
     "en": {
+        'export_beside_sources': 'Save next to each original: -logo, or -logo01, -logo02… for a batch. Existing names are skipped.',
+        'compare_original': 'Show original · Before / After',
+        'compare_result': 'Show changes · Before / After',
         'logo_folder': 'Folder…',
         'logo_folder_title': 'Choose your local template folder',
         'logo_library': 'Templates',
@@ -210,6 +213,9 @@ STRINGS = {
         "photos_empty": "No photos yet",
     },
     "ru": {
+        'export_beside_sources': 'Сохранение рядом с исходниками: -logo, для нескольких фото — -logo01, -logo02… Занятые имена пропускаются.',
+        'compare_original': 'Показать оригинал · До / После',
+        'compare_result': 'Показать изменения · До / После',
         'logo_folder': 'Папка…',
         'logo_folder_title': 'Выберите локальную папку шаблонов',
         'logo_library': 'Шаблоны',

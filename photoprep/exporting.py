@@ -79,7 +79,7 @@ def rename_exclusive(source,target):
         Path(source).unlink()
 
 
-def save_clean(image,folder,stem,format,quality,protected=()):
+def save_clean(image,folder,stem,format,quality,protected=(),*,start_index=0):
     from PIL import Image
     if format not in ('JPEG','PNG') or not 1<=quality<=100:
         raise ValueError('export_failed')
@@ -102,8 +102,8 @@ def save_clean(image,folder,stem,format,quality,protected=()):
             else:
                 clean.save(stream,format='PNG',optimize=True)
             stream.flush();os.fsync(stream.fileno())
-        for index in range(1,1000000):
-            name=f'{stem}-photoprep'+(f'-{index}' if index>1 else '')+suffix
+        for index in range(start_index,1000000):
+            name=f'{stem}-logo'+(f'{index:02d}' if index else '')+suffix
             target=folder/name
             if target.resolve() in protected or target.exists() or target.is_symlink():continue
             try:
@@ -146,7 +146,6 @@ def export_job(request_path):
             try:download_model(path,key,force=True)
             except OSError as exc:raise ValueError('model_download_error') from exc
     predictor=create_predictor(paths) if ids else None
-    folder=Path(request['folder']).resolve();folder.mkdir(parents=True,exist_ok=True)
     completed,errors=0,[]
     asset_key,asset_image=None,None
     for path in missing:
@@ -176,7 +175,7 @@ def export_job(request_path):
             image=compose(image,edits,width,height,asset_image if logo and logo.enabled else None)
             check_signature(photo.path,request['sources'][str(photo.path)])
             if logo and logo.enabled and logo.opacity>0:check_signature(logo.path,request['logos'].get(logo.path))
-            target=save_clean(image,folder,photo.path.stem,request['format'],request['quality'],protected)
+            target=save_clean(image,photo.path.parent,photo.path.stem,request['format'],request['quality'],protected,start_index=index-len(missing) if len(wanted)>1 else 0)
             completed+=1
             emit(file=str(target),completed=completed,index=index,total=len(wanted))
         except Exception as exc:

@@ -242,6 +242,7 @@ class MainWindow(QMainWindow):
             self.tools[key] = button
             layout.addWidget(button)
         layout.addStretch(1)
+        self.tools["compare"].setCheckable(True)
         self.tools["compare"].clicked.connect(lambda:self._compare_view(not self._after_view))
         self.rail_info = self._tool_button("info", rail=True)
         self.rail_info.setEnabled(False)
@@ -410,9 +411,7 @@ class MainWindow(QMainWindow):
             return
         self._capture_view()
         self.canvas.set_tool(tool)
-        if tool in ("mask","erase"):
-            self._show_preview(self._current_preview() is not None)
-        if tool in ("logo","crop","select") and self._has_logo():
+        if tool in ("mask","erase","crop","logo"):
             self._show_preview(True)
         self.tool_options.setCurrentIndex(2 if tool=="logo" else 1 if tool=="crop" else 0)
         self.tool_options.setVisible(tool!="select")
@@ -432,6 +431,7 @@ class MainWindow(QMainWindow):
     def _edits_committed(self, path, edits):
         self._capture_view(finish_stroke=False)
         if self.workspace.set_edits(Path(path), edits):
+            self._show_preview(True)
             self._refresh_controls()
             self._update_title()
 
@@ -498,19 +498,6 @@ class MainWindow(QMainWindow):
         self.cancel_ai_button.hide()
         row.addWidget(self.cancel_ai_button)
         layout.addLayout(row)
-        compare_row = QHBoxLayout()
-        self.compare_group = QButtonGroup(self)
-        self.before_button,self.after_button = QPushButton(),QPushButton()
-        for button,after in ((self.before_button,False),(self.after_button,True)):
-            button.setObjectName('LanguageChoice')
-            button.setProperty('compact',True)
-            button.setFixedHeight(28)
-            button.setCheckable(True)
-            self.compare_group.addButton(button)
-            button.toggled.connect(lambda checked,result=after:self._compare_view(result) if checked else None)
-            compare_row.addWidget(button)
-        self.before_button.setChecked(True)
-        layout.addLayout(compare_row)
         self.ai_status = QLabel()
         self.ai_status.setObjectName('SmallHint')
         self.ai_status.setWordWrap(True)
@@ -563,7 +550,7 @@ class MainWindow(QMainWindow):
         return bool(logo and logo.enabled and logo.opacity>0 and self.canvas._logo_image is not None)
 
     def _compare_view(self,after):
-        if not after and self.canvas.tool in ('mask','erase','logo'):
+        if not after and self.canvas.tool!='select':
             self._select_tool('select')
         self._show_preview(after)
 
@@ -683,19 +670,16 @@ class MainWindow(QMainWindow):
         return self._previews.get(self._preview_key())
 
     def _show_preview(self,after):
-        if not hasattr(self,'before_button') or not self.canvas.has_photo:
+        if not self.canvas.has_photo:
             return
         image = self._current_preview() if after else None
-        if after and image is None and not self._has_logo():
-            return
         self._after_view=after
         self.canvas.set_preview(image)
         self.canvas.set_logo_visible(after and self.canvas.tool not in ("mask","erase"))
-        button = self.after_button if after else self.before_button
-        if not button.isChecked():
-            button.blockSignals(True)
-            button.setChecked(True)
-            button.blockSignals(False)
+        self.canvas.set_comparison_before(not after)
+        self.tools['compare'].setChecked(after)
+        self.tools['compare'].setToolTip(self.t('compare_original' if after else 'compare_result'))
+        self.tools['compare'].setAccessibleName(self.tools['compare'].toolTip())
 
     def _process_mask(self):
         if self.ai.busy or not self.canvas.has_photo:
@@ -933,7 +917,8 @@ class MainWindow(QMainWindow):
             self.canvas.set_output_dimensions(self.workspace.output_width,self.workspace.output_height)
             self.canvas.set_edits(self.workspace.edits.get(Path(path), PhotoEdits()))
         if success:
-            self._show_preview(self._current_preview() is not None or self._has_logo())
+            edits=self.workspace.edits.get(Path(path),PhotoEdits())
+            self._show_preview(bool(edits.strokes or edits.passes or edits.crop or edits.logo))
         self._refresh_controls()
         self.statusBar().showMessage(self.t("status_loaded", count=len(self.photos)) if success
                                      else self.t("invalid_image", path=Path(path).name))
@@ -1067,7 +1052,7 @@ class MainWindow(QMainWindow):
         self.tool_options.setEnabled(enabled)
         edits = self.workspace.edits.get(self.workspace.selected,PhotoEdits())
         preview = self._current_preview() is not None
-        has_result=preview or self._has_logo()
+        has_result=preview or bool(edits.strokes or edits.passes or edits.crop or edits.logo) or (self.workspace.output_width,self.workspace.output_height)!=(1136,710)
         self.tools['compare'].setEnabled(enabled and has_result)
         self.export_button.setEnabled(enabled)
         self._refresh_logo_controls(enabled)
@@ -1076,8 +1061,6 @@ class MainWindow(QMainWindow):
         spec = get_model(self.settings.model_id)
         self.process_button.setToolTip(self.t('ai_download_hint',name=spec.name,size=f'{spec.size/1e6:.1f}') if not model_path(self.settings.model_id).is_file() else self.t('ai_model_active',name=spec.name))
         self.cancel_ai_button.setVisible(self.ai.busy)
-        self.before_button.setEnabled(enabled and has_result)
-        self.after_button.setEnabled(enabled and has_result)
         for widget in (self.thumbnails,self.open_files_button,self.open_folder_button,self.settings_button):
             widget.setEnabled(not self.ai.busy)
         if not self.ai.busy:
@@ -1128,11 +1111,13 @@ class MainWindow(QMainWindow):
 
     def _preferences_applied(self):
         self._capture_view()
+        changed=(self.workspace.output_width,self.workspace.output_height)!=(self.settings.output_width,self.settings.output_height)
         self.workspace.set_output_size(self.settings.output_width,self.settings.output_height)
         self._apply_appearance()
         self.canvas.set_output_dimensions(self.workspace.output_width,self.workspace.output_height)
         if self.workspace.selected:
             self.canvas.set_edits(self.workspace.edits.get(self.workspace.selected,PhotoEdits()))
+            if changed:self._show_preview(True)
         self.retranslate()
 
     def retranslate(self):
@@ -1203,8 +1188,8 @@ class MainWindow(QMainWindow):
         self.note.setText(t("ai_preview_note"))
         self.process_button.setText(t("process_mask"))
         self.cancel_ai_button.setText(t("ai_cancel"))
-        self.before_button.setText(t("ai_original"))
-        self.after_button.setText(t("ai_result"))
+        self.tools['compare'].setToolTip(t('compare_original' if self._after_view else 'compare_result'))
+        self.tools['compare'].setAccessibleName(self.tools['compare'].toolTip())
         self.source_value.setText("—" if not self.photos or self.thumbnails.currentRow() < 0 else f"{self.photos[self.thumbnails.currentRow()].width} × {self.photos[self.thumbnails.currentRow()].height} px")
         self.export_value.setText(f"{self.workspace.output_width} × {self.workspace.output_height} px")
         self.statusBar().showMessage(t("loading_photo") if self.canvas.loading else t("status_loaded", count=len(self.photos)) if self.photos else t("status_empty"))

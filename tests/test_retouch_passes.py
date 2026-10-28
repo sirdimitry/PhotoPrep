@@ -77,9 +77,9 @@ def test_passes_use_previous_result_and_undo_redo_atomically(window,monkeypatch)
     assert not w.workspace.edits[source].strokes
     assert w._current_preview().pixelColor(80,60)==first.pixelColor(80,60)
     assert w._current_preview().pixelColor(280,210)==second.pixelColor(280,210)
-    w.before_button.click()
+    w.tools['compare'].click()
     assert w.canvas._pixmap_item.pixmap().toImage().pixelColor(80,60)==original.pixelColor(80,60)
-    w.after_button.click()
+    w.tools['compare'].click()
     assert w.canvas._preview_active
     w.undo();wait_for(lambda:not w.canvas.loading)
     assert w.workspace.edits[source].passes==((a,),)

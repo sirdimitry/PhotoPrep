@@ -39,7 +39,7 @@ def make_source(path,size=(320,200)):
 def request_for(tmp_path,workspace,format='PNG'):
     session=tmp_path/'plan.photoprep.json';save_session(session,workspace)
     data={'session':str(session),'sources':{str(p.path):signature(p.path) for p in workspace.photos},'protected':[str(p.path) for p in workspace.photos],
-          'logos':{ed.logo.path:signature(ed.logo.path) for ed in workspace.edits.values() if ed.logo},'models':{},'folder':str(tmp_path/'output'),'format':format,'quality':90}
+          'logos':{ed.logo.path:signature(ed.logo.path) for ed in workspace.edits.values() if ed.logo},'models':{},'format':format,'quality':90}
     request=tmp_path/'job.json';request.write_text(json.dumps(data));return request
 
 
@@ -73,7 +73,7 @@ def test_export_strips_exif_gps_xmp_comments_and_preserves_source(tmp_path,forma
     image.save(source,exif=exif,xmp=b'<PRIVATE_XMP/>',comment=b'PRIVATE_COMMENT')
     before=source.read_bytes();workspace=Workspace(output_width=160,output_height=160);workspace.add([Photo.from_path(source)])
     export_job(request_for(tmp_path,workspace,format))
-    output=next((tmp_path/'output').iterdir())
+    output=next(tmp_path.glob('*-logo.*'))
     with Image.open(output) as result:
         assert result.size==(160,160)
         assert not result.getexif()
@@ -84,13 +84,13 @@ def test_export_strips_exif_gps_xmp_comments_and_preserves_source(tmp_path,forma
 
 def test_atomic_export_never_overwrites_existing_files_sources_or_symlinks(tmp_path):
     application=app();image=QImage(160,160,QImage.Format.Format_RGBA8888);image.fill(QColor('green'))
-    protected=tmp_path/'photo-photoprep.png';protected.write_bytes(b'original source')
-    linked=tmp_path/'photo-photoprep-2.png';linked.symlink_to(protected)
+    protected=tmp_path/'photo-logo.png';protected.write_bytes(b'original source')
+    linked=tmp_path/'photo-logo01.png';linked.symlink_to(protected)
     output=save_clean(image,tmp_path,'photo','PNG',90,[protected])
-    assert output.name=='photo-photoprep-3.png'
+    assert output.name=='photo-logo02.png'
     assert protected.read_bytes()==b'original source' and linked.is_symlink()
     second=save_clean(image,tmp_path,'photo','PNG',90,[protected])
-    assert second.name=='photo-photoprep-4.png'
+    assert second.name=='photo-logo03.png'
     assert not list(tmp_path.glob('.photoprep-*.tmp'))
 
 
@@ -125,8 +125,8 @@ def test_batch_duplicate_stems_and_missing_photo(tmp_path):
     workspace=Workspace(output_width=160,output_height=160);workspace.add(photos)
     request=request_for(tmp_path,workspace);photos[-1].path.unlink()
     export_job(request)
-    names={p.name for p in (tmp_path/'output').iterdir()}
-    assert names=={'same-photoprep.png','same-photoprep-2.png'}
+    names={p.name for p in tmp_path.glob('*-logo*.png')}
+    assert names=={'same-logo01.png','same-logo02.png'}
 
 
 def test_logo_drag_compare_and_frame_alignment(tmp_path,monkeypatch):
@@ -138,15 +138,15 @@ def test_logo_drag_compare_and_frame_alignment(tmp_path,monkeypatch):
     try:
         before=hashlib.sha256(source.read_bytes()).digest()
         w._select_tool('logo');w._apply_logo_path(logo)
-        assert w.canvas._logo_overlay.isVisible() and w.after_button.isEnabled()
+        assert w.canvas._logo_overlay.isVisible() and w.tools['compare'].isEnabled()
         old=w.workspace.edits[source].logo
         rect=w.canvas.logo_source_rect;start=w.canvas.mapFromScene(rect.center());end=start+QPoint(80,60)
         QTest.mousePress(w.canvas.viewport(),Qt.MouseButton.LeftButton,pos=start);QTest.mouseMove(w.canvas.viewport(),end);QTest.mouseRelease(w.canvas.viewport(),Qt.MouseButton.LeftButton,pos=end)
         assert w.workspace.edits[source].logo!=old
         w.undo();wait(lambda:not w.canvas.loading);assert w.workspace.edits[source].logo==old
         w.redo();wait(lambda:not w.canvas.loading)
-        w.before_button.click();assert not w.canvas._logo_overlay.isVisible()
-        w.after_button.click();assert w.canvas._logo_overlay.isVisible()
+        w.tools['compare'].click();assert not w.canvas._logo_overlay.isVisible()
+        w.tools['compare'].click();assert w.canvas._logo_overlay.isVisible()
         w._select_tool('crop')
         from PySide6.QtCore import QRectF
         output_rect=logo_rect(QRectF(0,0,w.workspace.output_width,w.workspace.output_height),w.workspace.edits[source].logo,read_logo(logo))
@@ -161,7 +161,7 @@ def test_logo_drag_compare_and_frame_alignment(tmp_path,monkeypatch):
 def test_pending_mask_blocks_export_and_large_output_is_rejected(tmp_path):
     application=app();photo=make_source(tmp_path/'photo.png');workspace=Workspace();workspace.add([photo])
     workspace.set_edits(photo.path,PhotoEdits((MaskStroke(((.5,.5),),.1),)))
-    d=ExportDialog(workspace,Preferences(QSettings(str(tmp_path/'prefs.ini'),QSettings.Format.IniFormat)),folder=tmp_path/'output')
+    d=ExportDialog(workspace,Preferences(QSettings(str(tmp_path/'prefs.ini'),QSettings.Format.IniFormat)))
     assert not d.start_button.isEnabled()
     d.reject()
     image=QImage(160,160,QImage.Format.Format_RGB32)
@@ -171,7 +171,7 @@ def test_pending_mask_blocks_export_and_large_output_is_rejected(tmp_path):
 def test_cancel_export_keeps_completed_and_removes_only_own_partial(tmp_path,monkeypatch):
     application=app();from photoprep.ui import export_dialog as module
     monkeypatch.setattr(module,'storage_root',lambda:tmp_path)
-    folder=tmp_path/'output'
+    folder=tmp_path
     class SlowProcess(QProcess):
         def start(self):
             import sys
@@ -179,7 +179,7 @@ def test_cancel_export_keeps_completed_and_removes_only_own_partial(tmp_path,mon
             self.setProgram(sys.executable);self.setArguments(['-c',code,str(folder)]);super().start()
     monkeypatch.setattr(module,'QProcess',SlowProcess)
     photo=make_source(tmp_path/'photo.png');workspace=Workspace();workspace.add([photo])
-    d=ExportDialog(workspace,Preferences(QSettings(str(tmp_path/'prefs.ini'),QSettings.Format.IniFormat)),folder=folder)
+    d=ExportDialog(workspace,Preferences(QSettings(str(tmp_path/'prefs.ini'),QSettings.Format.IniFormat)))
     d.start();wait(lambda:len(d.files)==1)
     other=folder/'.photoprep-999999-other.tmp';other.write_bytes(b'other process')
     d.cancel_or_close();wait(lambda:not d.busy)
@@ -205,7 +205,7 @@ def test_exif_orientation_is_applied_before_crop_and_removed(tmp_path):
     photo=Photo.from_path(source);assert (photo.width,photo.height)==(200,320)
     workspace=Workspace(output_width=160,output_height=256);workspace.add([photo])
     export_job(request_for(tmp_path,workspace))
-    with Image.open(next((tmp_path/'output').iterdir())) as result:
+    with Image.open(next(tmp_path.glob('*-logo.*'))) as result:
         assert result.getpixel((80,30))[0]>240 and result.getpixel((80,230))[2]>240
         assert not result.getexif()
 
@@ -261,9 +261,9 @@ class ClosingWindow(Original):
         assert success
         self._apply_logo_path(folder/'logo.png')
         for index in range(4):
-            dialog=ExportDialog(self.workspace,self.settings,self,folder=folder/'output')
+            dialog=ExportDialog(self.workspace,self.settings,self)
             dialog.show();dialog.reject()
-        dialog=ExportDialog(self.workspace,self.settings,self,folder=folder/'output')
+        dialog=ExportDialog(self.workspace,self.settings,self)
         QTimer.singleShot(0,dialog.reject)
         dialog.exec()
         QTimer.singleShot(0,self.close)
@@ -289,6 +289,6 @@ def test_exclusive_commit_handles_a_concurrent_name_collision(tmp_path,monkeypat
         return real(source,target)
     monkeypatch.setattr(module,'rename_exclusive',competing_writer)
     result=module.save_clean(image,tmp_path,'photo','PNG',90)
-    assert (tmp_path/'photo-photoprep.png').read_bytes()==b'another writer'
-    assert result.name=='photo-photoprep-2.png'
+    assert (tmp_path/'photo-logo.png').read_bytes()==b'another writer'
+    assert result.name=='photo-logo01.png'
     assert not list(tmp_path.glob('.photoprep-*.tmp'))
