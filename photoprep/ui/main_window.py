@@ -29,7 +29,7 @@ from .editor import EditorCanvas as PhotoCanvas
 from .preferences_dialog import PreferencesDialog
 from .theme import stylesheet
 from .filmstrip import FilmstripDelegate
-from .widgets import PhotoNameLabel
+from .widgets import PhotoNameLabel, ToolOptions
 from .ai_controller import AIController
 from .export_dialog import ExportDialog
 from ..inference import model_path
@@ -115,6 +115,7 @@ class MainWindow(QMainWindow):
         self._ai_stage = None
         self._ai_percent = 0
         self._after_view=False
+        self._start_mask_on_load=None
         self._export_dialog=None
         self.setWindowTitle("PhotoPrep")
         self.setWindowIcon(QIcon(app_icon_path()))
@@ -175,12 +176,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(badge, alignment=Qt.AlignmentFlag.AlignVCenter)
         self.photo_label = PhotoNameLabel()
         layout.addWidget(self.photo_label,stretch=1)
-        layout.addSpacing(8)
-        header_separator = QFrame()
-        header_separator.setFixedSize(1, 26)
-        header_separator.setObjectName("HeaderDivider")
-        layout.addWidget(header_separator)
-        layout.addSpacing(8)
         self.open_files_button = QPushButton()
         self.open_files_button.setIcon(QIcon(icon_path("files")))
         self.open_files_button.setIconSize(QSize(18,18))
@@ -229,8 +224,8 @@ class MainWindow(QMainWindow):
         layout.setSpacing(7)
         self.tools = {}
         self.tool_group = QButtonGroup(self)
-        for key, icon in [("select", "move"), ("mask", "brush"), ("erase", "eraser"),
-                          ("crop", "crop"), ("logo", "logo"), ("compare", "compare")]:
+        for key, icon in [("mask", "brush"), ("erase", "eraser"), ("crop", "crop"),
+                          ("select", "move"), ("logo", "logo"), ("compare", "compare")]:
             button = self._tool_button(icon, rail=True)
             button.setToolTip(key)
             if key in ("select", "mask", "erase", "crop", "logo"):
@@ -346,7 +341,7 @@ class MainWindow(QMainWindow):
         return button
 
     def _build_tool_options(self):
-        options=QStackedWidget()
+        options=ToolOptions()
         options.setObjectName("ToolOptions")
         options.setSizePolicy(QSizePolicy.Policy.Preferred,QSizePolicy.Policy.Fixed)
         mask=QWidget()
@@ -848,6 +843,7 @@ class MainWindow(QMainWindow):
                 continue
         added = self.workspace.add(photos)
         if added:
+            self._start_mask_on_load=self.workspace.selected
             self._present_workspace()
         else:
             self.statusBar().showMessage(self.t("no_new_images"), 6000)
@@ -919,6 +915,9 @@ class MainWindow(QMainWindow):
         if success:
             edits=self.workspace.edits.get(Path(path),PhotoEdits())
             self._show_preview(bool(edits.strokes or edits.passes or edits.crop or edits.logo))
+            if self._start_mask_on_load==Path(path):
+                self._start_mask_on_load=None
+                self._select_tool('mask')
         self._refresh_controls()
         self.statusBar().showMessage(self.t("status_loaded", count=len(self.photos)) if success
                                      else self.t("invalid_image", path=Path(path).name))

@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.1.0-alpha.13 — 2026-10-28
+
+- Use the entire header allocation up to Open photos for the full filename.
+  Elide only actual overflow, retaining both ends with an ASCII `...` in the middle.
+- Start new imports with the removal mask. Order tools as mask, eraser, fixed-frame
+  crop, pan, own logo and comparison. Size the inspector to the active tool so
+  mask controls stay compact instead of inheriting a hidden logo panel's height.
+- Add RU/EN Preferences → About, including the full MIT License, a notice about
+  user-selected logo rights/responsibility and the author's public X hyperlink.
+  Third-party artwork and branded templates remain outside the release.
+
+Validation: 100 tests passed offscreen and with native macOS rendering, both
+with exit status 0. Full/shortened/restored filenames, header allocation, mask-first
+imports, compact controls and both About translations were checked visually.
+
 ## v0.1.0-alpha.12 — 2026-10-28
 
 - Export directly beside each source image, without a destination-folder picker

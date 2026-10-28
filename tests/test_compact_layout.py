@@ -32,7 +32,10 @@ def test_tools_never_reduce_photo_view_and_header_names_are_short(tmp_path,monke
         top=window.canvas.mapTo(window.centralWidget(),window.canvas.rect().topLeft()).y()
         assert top==50
         assert window.photo_label.toolTip()==source.name
-        assert 'название' not in window.photo_label.text()
+        if window.photo_label.fontMetrics().horizontalAdvance(source.name)<=window.photo_label.width():
+            assert window.photo_label.text()==source.name
+        else:
+            assert '...' in window.photo_label.text() and window.photo_label.text().endswith('.png')
         for language in ('ru','en'):
             prefs.language=language
             window.retranslate()

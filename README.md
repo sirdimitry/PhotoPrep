@@ -11,7 +11,7 @@
 ![PhotoPrep — AI cleanup, cropping, branding and batch workflows](assets/github-banner.png)
 
 <p align="center">
-  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.12-FACC15?style=flat-square&labelColor=202227">
+  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.13-FACC15?style=flat-square&labelColor=202227">
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-33373d?style=flat-square">
   <img alt="Language" src="https://img.shields.io/badge/UI-English%20%2B%20Русский-33373d?style=flat-square">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-33373d?style=flat-square"></a>
@@ -44,7 +44,7 @@
 
 ### Get it
 
-**[Download v0.1.0-alpha.12 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.12)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
+**[Download v0.1.0-alpha.13 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.13)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
 
 This early alpha is **ad-hoc signed and not notarized**, so macOS may display a security warning. Verified on macOS 27.2 / Apple Silicon; Intel and other macOS versions have not been tested. See [verified changes](CHANGELOG.md).
 
@@ -161,3 +161,16 @@ The left-side Before/After button is the single comparison control. It becomes
 available for masks, crop plans, retouch, logos and output-size changes. Before
 shows original pixels, hides mask/logo overlays and uses the initial crop guide;
 After restores the planned edits. Switching views does not discard edits.
+
+### Workflow and About
+
+New imports start with the removal mask tool. The left tools follow the workflow:
+mask, mask eraser, fixed-frame crop, pan, own logo, comparison. Crop keeps the
+configured output dimensions while the image moves and scales underneath.
+The header shows the full filename whenever it fits, using the space up to Open
+photos; longer names retain the beginning and end with `...` in the middle.
+
+Preferences → About includes the full MIT License, a logo-use notice and
+[@sirdimitry on X](https://x.com/sirdimitry). Third-party logos and branded templates
+are not bundled. Users choose their own artwork and are responsible for permission
+to use it; PhotoPrep's MIT licence grants no rights to third-party marks.

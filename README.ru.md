@@ -10,7 +10,7 @@
 
 ![PhotoPrep — удаление логотипов, кадрирование, новый логотип и пакетная обработка](assets/github-banner.png)
 
-<p align="center"><img alt="Версия" src="https://img.shields.io/badge/версия-0.1.0--alpha.12-FACC15?style=flat-square&labelColor=202227"> <img alt="Платформа" src="https://img.shields.io/badge/macOS-Apple%20Silicon-33373d?style=flat-square"> <img alt="Лицензия" src="https://img.shields.io/badge/лицензия-MIT-33373d?style=flat-square"></p>
+<p align="center"><img alt="Версия" src="https://img.shields.io/badge/версия-0.1.0--alpha.13-FACC15?style=flat-square&labelColor=202227"> <img alt="Платформа" src="https://img.shields.io/badge/macOS-Apple%20Silicon-33373d?style=flat-square"> <img alt="Лицензия" src="https://img.shields.io/badge/лицензия-MIT-33373d?style=flat-square"></p>
 
 ## Что такое PhotoPrep?
 
@@ -40,7 +40,7 @@
 
 ### Как попробовать
 
-**[Скачать v0.1.0-alpha.12 для macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.12)** — DMG и контрольная сумма SHA256. Требуется **macOS 14+**; устанавливать Python отдельно не нужно. Перетащи PhotoPrep в Applications.
+**[Скачать v0.1.0-alpha.13 для macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.13)** — DMG и контрольная сумма SHA256. Требуется **macOS 14+**; устанавливать Python отдельно не нужно. Перетащи PhotoPrep в Applications.
 
 Это ранняя альфа с **ad-hoc подписью, без нотарификации Apple**: macOS может показать предупреждение при открытии скачанного приложения. Проверено на macOS 27.2 / Apple Silicon; Intel и другие версии macOS не проверялись. [Список изменений](CHANGELOG.md).
 
@@ -168,3 +168,17 @@ python -m photoprep
 кадрирования, ретуши, логотипа и изменения размера результата. «До» показывает
 исходные пиксели без маски и логотипа, с начальной направляющей кадра; «После»
 возвращает изменения. Сравнение не удаляет настройки фото.
+
+### Порядок работы и «О программе»
+
+После импорта открывается маска удаления. Инструменты слева идут по порядку:
+маска, ластик маски, рамка, перемещение, свой логотип, сравнение. Размер рамки
+сохраняется, фотографию можно двигать и масштабировать внутри неё.
+Имя в заголовке использует всю ширину до «Открыть фото»; если оно не помещается,
+сохраняются начало и конец имени, а середина заменяется на `...`.
+
+В настройках есть раздел «О программе»: полный текст MIT, пояснение об
+использовании логотипов и ссылка [@sirdimitry в X](https://x.com/sirdimitry).
+Сторонние логотипы и брендированные шаблоны не включены в релиз. Пользователь
+сам выбирает изображения и отвечает за наличие прав на их использование;
+лицензия MIT на PhotoPrep не предоставляет прав на чужие знаки.

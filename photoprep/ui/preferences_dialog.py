@@ -6,10 +6,12 @@ from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QLineEdit, QButtonGroup, QDialog, QDialogButtonBox, QFrame,
     QGridLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton,
-    QVBoxLayout, QToolButton, QSizePolicy, QTabWidget, QWidget,
+    QVBoxLayout, QToolButton, QSizePolicy, QTabWidget, QWidget, QTextBrowser,
 )
 
+from .. import __version__
 from ..i18n import tr
+from .assets import ROOT
 from ..settings import Preferences
 from .theme import stylesheet
 from .model_manager import ModelManager
@@ -52,6 +54,7 @@ class PreferencesDialog(QDialog):
         self.tabs.addTab(general_page,'')
         self.models = ModelManager(settings,self)
         self.tabs.addTab(self.models,'')
+        self.tabs.addTab(self._build_about(),'')
         outer.addWidget(self.tabs)
         root.setContentsMargins(8,8,8,8)
         root.setSpacing(20)
@@ -142,6 +145,23 @@ class PreferencesDialog(QDialog):
         self._validate()
         self.retranslate()
 
+    def _build_about(self):
+        page=QWidget();layout=QVBoxLayout(page);layout.setContentsMargins(12,12,12,12);layout.setSpacing(12)
+        title=QLabel('PhotoPrep '+__version__);title.setObjectName('SectionTitle');layout.addWidget(title)
+        self.about_license=QLabel();self.about_license.setWordWrap(True);layout.addWidget(self.about_license)
+        self.license_text=QTextBrowser();self.license_text.setOpenExternalLinks(False);self.license_text.setMinimumHeight(110);self.license_text.setMaximumHeight(160)
+        for path in (ROOT/'LICENSE',ROOT/'third-party/PhotoPrep-LICENSE'):
+            if path.is_file():
+                self.license_text.setPlainText(path.read_text(encoding='utf-8'));break
+        layout.addWidget(self.license_text)
+        self.about_logos=QLabel();self.about_logos.setWordWrap(True);self.about_logos.setTextFormat(Qt.TextFormat.PlainText);layout.addWidget(self.about_logos)
+        layout.addStretch(1)
+        self.about_author=QLabel('<a href="https://x.com/sirdimitry">@sirdimitry</a>')
+        self.about_author.setTextFormat(Qt.TextFormat.RichText);self.about_author.setOpenExternalLinks(True)
+        self.about_author.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        layout.addWidget(self.about_author)
+        return page
+
     def _validate(self):
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(
             self.width_input.hasAcceptableInput() and self.height_input.hasAcceptableInput() and not self.models.busy)
@@ -165,6 +185,9 @@ class PreferencesDialog(QDialog):
         self.setWindowTitle(t("preferences_title"))
         self.tabs.setTabText(0,t("general"))
         self.tabs.setTabText(1,t("models_tab"))
+        self.tabs.setTabText(2,t('about_tab'))
+        self.about_license.setText(t('about_license'))
+        self.about_logos.setText(t('about_logos'))
         self.models.retranslate(self.selected_language)
         self.general.setTitle(t("general"))
         self.language_label.setText(t("language"))
