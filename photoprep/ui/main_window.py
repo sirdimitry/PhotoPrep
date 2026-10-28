@@ -25,7 +25,7 @@ from ..workspace import Workspace, ViewState
 from ..editing import PhotoEdits, render_mask
 from ..branding import LogoPlacement, read_logo, placement_from_path, template_catalog
 from ..session import load_session, save_session, SessionError
-from .assets import app_icon_path, icon_path, ui_icon
+from .assets import app_icon_path, icon_path, ui_icon, reset_icon
 from .editor import EditorCanvas as PhotoCanvas
 from .preferences_dialog import PreferencesDialog
 from .theme import stylesheet
@@ -494,12 +494,13 @@ class MainWindow(QMainWindow):
         self.cancel_ai_button.clicked.connect(self._cancel_ai)
         self.cancel_ai_button.hide()
         row.addWidget(self.cancel_ai_button)
-        layout.addLayout(row)
-        self.revert_ai_button = QPushButton()
-        self.revert_ai_button.setProperty("compact",True)
-        self.revert_ai_button.setFixedHeight(28)
+        self.revert_ai_button = QToolButton()
+        self.revert_ai_button.setObjectName("HeaderButton")
+        self.revert_ai_button.setFixedSize(30,30)
+        self.revert_ai_button.setIconSize(QSize(20,20))
         self.revert_ai_button.clicked.connect(self._revert_removal)
-        layout.addWidget(self.revert_ai_button)
+        row.addWidget(self.revert_ai_button)
+        layout.addLayout(row)
         self.ai_status = QLabel()
         self.ai_status.setObjectName('SmallHint')
         self.ai_status.setWordWrap(True)
@@ -1158,6 +1159,7 @@ class MainWindow(QMainWindow):
 
     def _apply_appearance(self):
         appearance = self.settings.appearance
+        self.revert_ai_button.setIcon(reset_icon(appearance))
         self.setStyleSheet(stylesheet(appearance))
         self.canvas.set_appearance(appearance)
         self.filmstrip_delegate.appearance = appearance
@@ -1248,8 +1250,8 @@ class MainWindow(QMainWindow):
         self.note.setText(t("ai_preview_note"))
         self.process_button.setText(t("process_mask"))
         self.cancel_ai_button.setText(t("ai_cancel"))
-        self.revert_ai_button.setText(t("ai_revert"))
-        self.revert_ai_button.setToolTip(t("ai_revert_hint"))
+        self.revert_ai_button.setAccessibleName(t("ai_revert"))
+        self.revert_ai_button.setToolTip(t("ai_revert")+"\n"+t("ai_revert_hint"))
         self.tools['compare'].setToolTip(t('compare_original' if self._after_view else 'compare_result'))
         self.tools['compare'].setAccessibleName(self.tools['compare'].toolTip())
         self.source_value.setText("—" if not self.photos or self.thumbnails.currentRow() < 0 else f"{self.photos[self.thumbnails.currentRow()].width} × {self.photos[self.thumbnails.currentRow()].height} px")

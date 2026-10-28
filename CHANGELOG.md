@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.0-alpha.18 — 2026-10-28
+
+- Replace the removal undo text row with a compact circular reset arrow beside
+  processing. Keep RU/EN tooltips and an accessible name; adapt to both themes.
+- Retain alpha.17 SDXL multiprocessing fix and non-destructive removal undo.
+
 ## v0.1.0-alpha.17 — 2026-10-28
 
 - Dispatch frozen multiprocessing helpers before importing the GUI, preventing SDXL
