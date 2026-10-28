@@ -98,6 +98,9 @@ STRINGS = {
         'ai_restore_hint': 'Saved removal passes are ready to restore. Original stays unchanged.',
         'ai_pass_limit': 'This photo has reached 100 removal passes. Undo a pass before adding another.',
 
+        'ai_revert': 'Undo last removal',
+        'ai_revert_hint': 'Restore the previous result and mask. Adjust the mask or model, then remove again. Undo/Redo also remain available in Edit.',
+        'ai_reverted': 'Last removal undone. Adjust the restored mask or model and remove again.',
         'process_mask': 'Remove selected area',
         'ai_original': 'Before',
         'ai_result': 'After',
@@ -319,6 +322,9 @@ STRINGS = {
         'ai_restore_hint': 'Последовательность удалений сохранена. Восстановите ретушь перед дальнейшей правкой.',
         'ai_pass_limit': 'Для фото достигнут предел: 100 проходов. Отмените один из проходов, чтобы продолжить.',
 
+        'ai_revert': 'Отменить последнее удаление',
+        'ai_revert_hint': 'Вернуть предыдущий результат и маску. Поправьте маску или выберите модель и повторите удаление. Отмена/повтор доступны и в меню Правка.',
+        'ai_reverted': 'Последнее удаление отменено. Поправьте маску или выберите модель и повторите обработку.',
         'process_mask': 'Удалить выделенное',
         'ai_original': 'До',
         'ai_result': 'После',

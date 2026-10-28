@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.1.0-alpha.17 — 2026-10-28
+
+- Dispatch frozen multiprocessing helpers before importing the GUI, preventing SDXL
+  resource tracking from opening extra application windows.
+- Add Undo last removal beside processing. Restore its mask for refinement/retry,
+  preserve earlier passes, crop, logo and pending strokes; keep Edit Undo/Redo.
+
+Validation: 129 automated tests passed. A packaged SDXL pass completed in 47.41s
+with zero extra GUI starts, exact unmasked pixels and an unchanged original.
+The frozen resource tracker exited normally; DMG signature, checksum, source
+matching and privacy inspection passed.
+
 ## v0.1.0-alpha.16 — 2026-10-28
 
 - Add optional SDXL Inpainting on Apple Silicon Metal, with 1024px context and

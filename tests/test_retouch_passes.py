@@ -158,3 +158,62 @@ def test_malformed_pass_recipes_are_rejected(tmp_path,passes):
     session=tmp_path/'bad.photoprep.json'
     session.write_text(json.dumps({'format':'PhotoPrep','version':3,'photos':[{'path':source.name,'edits':{'passes':passes}}]}))
     with pytest.raises(SessionError):load_session(session)
+
+
+def test_visible_revert_restores_mask_preserves_later_changes_and_retries(window,monkeypatch):
+    from photoprep.editing import CropRect,LogoPlacement
+    w,source,original=window
+    original_hash=hashlib.sha256(source.read_bytes()).digest()
+    a,b,pending=stroke_at(.2,.2),stroke_at(.7,.7),stroke_at(.8,.8)
+    first=original.copy();first.setPixelColor(80,60,Qt.GlobalColor.red)
+    edits=PhotoEdits(passes=((a,),),pass_models=('lama',))
+    w.workspace.set_edits(source,edits);w._previews[w._preview_key()]=first
+    edits=replace(edits,passes=((a,),(b,)),pass_models=('lama','sdxl'),
+                  strokes=(pending,),crop=CropRect(.1,.1,.8,.5),
+                  logo=LogoPlacement(str(source)))
+    w.workspace.set_edits(source,edits);w.canvas.set_edits(edits)
+    second=first.copy();second.setPixelColor(280,210,Qt.GlobalColor.green)
+    w._previews[w._preview_key()]=second;w._refresh_controls()
+    assert w.revert_ai_button.isVisible() and w.revert_ai_button.isEnabled()
+    w.revert_ai_button.click()
+    result=w.workspace.edits[source]
+    assert result.passes==((a,),) and result.pass_models==('lama',)
+    assert result.strokes==(b,pending) and result.crop==edits.crop and result.logo==edits.logo
+    assert w._current_preview()==first and w.canvas.tool=='mask'
+    w.undo();wait_for(lambda:not w.canvas.loading)
+    assert w.workspace.edits[source]==edits and w._current_preview()==second
+    w.redo();wait_for(lambda:not w.canvas.loading)
+    assert w.workspace.edits[source]==result
+    requests=[]
+    monkeypatch.setattr(w.ai,'start',lambda *args,**kwargs:requests.append((args,kwargs)))
+    w.process_button.click()
+    assert requests[-1][1]['base_image']==first
+    assert requests[-1][0][1] is not None
+    assert hashlib.sha256(source.read_bytes()).digest()==original_hash
+
+
+def test_revert_first_removal_returns_original_even_after_preview_eviction(window):
+    w,source,original=window
+    a=stroke_at(.2,.2)
+    edits=PhotoEdits(passes=((a,),),pass_models=('sdxl',))
+    w.workspace.set_edits(source,edits);w.canvas.set_edits(edits)
+    w._previews.clear();w._refresh_controls();w.revert_ai_button.click()
+    assert w.workspace.edits[source]==PhotoEdits(strokes=(a,))
+    assert not w.canvas._preview_active
+    assert not w.revert_ai_button.isVisible()
+    assert w.process_button.isEnabled()
+
+
+def test_retry_after_revert_replays_earlier_passes_when_cache_was_evicted(window,monkeypatch):
+    w,source,original=window
+    a,b=stroke_at(.2,.2),stroke_at(.7,.7)
+    edits=PhotoEdits(passes=((a,),(b,)),pass_models=('sdxl','lama'))
+    w.workspace.set_edits(source,edits);w.canvas.set_edits(edits)
+    w._previews.clear();w._refresh_controls();w.revert_ai_button.click()
+    requests=[]
+    monkeypatch.setattr(w.ai,'start',lambda *args,**kwargs:requests.append((args,kwargs)))
+    w.process_button.click()
+    args,kwargs=requests.pop()
+    assert kwargs['base_image'] is None
+    assert kwargs['replay']==((a,),) and kwargs['replay_models']==('sdxl',)
+    assert args[1] is not None and w.workspace.edits[source].strokes==(b,)

@@ -495,6 +495,11 @@ class MainWindow(QMainWindow):
         self.cancel_ai_button.hide()
         row.addWidget(self.cancel_ai_button)
         layout.addLayout(row)
+        self.revert_ai_button = QPushButton()
+        self.revert_ai_button.setProperty("compact",True)
+        self.revert_ai_button.setFixedHeight(28)
+        self.revert_ai_button.clicked.connect(self._revert_removal)
+        layout.addWidget(self.revert_ai_button)
         self.ai_status = QLabel()
         self.ai_status.setObjectName('SmallHint')
         self.ai_status.setWordWrap(True)
@@ -735,6 +740,23 @@ class MainWindow(QMainWindow):
         self._show_preview(base is not None)
         self._select_tool('select')
         self.ai.start(photo.path,mask,self._job_key(),base_image=base,replay=edits.passes if base is None else (),model_id=self.settings.model_id,replay_models=edits.models_for_passes if base is None else ())
+
+    def _revert_removal(self):
+        if self.ai.busy or not self.canvas.has_photo:
+            return
+        self._capture_view()
+        path = self.workspace.selected
+        edits = self.workspace.edits.get(path,PhotoEdits())
+        if not edits.passes:
+            return
+        # Preserve later crop/logo changes and any newly drawn refinement strokes.
+        edits = replace(edits,passes=edits.passes[:-1],
+                        pass_models=edits.models_for_passes[:-1],
+                        strokes=edits.passes[-1]+edits.strokes)
+        self.canvas.set_edits(edits)
+        self._edits_committed(path,edits)
+        self._select_tool("mask")
+        self.statusBar().showMessage(self.t("ai_reverted"),6000)
 
     def _cancel_ai(self):
         self._ai_stage = 'cancelled'
@@ -1096,6 +1118,8 @@ class MainWindow(QMainWindow):
         self.process_button.setText(self.t('ai_restore' if edits.passes and not preview and not edits.strokes else 'process_mask'))
         spec = get_model(self.settings.model_id)
         self.process_button.setToolTip(self.t('ai_download_hint',name=spec.name,size=f'{spec.size/1e6:.1f}') if not model_present(model_path(self.settings.model_id),self.settings.model_id) else self.t('ai_model_active',name=spec.name))
+        self.revert_ai_button.setVisible(bool(edits.passes))
+        self.revert_ai_button.setEnabled(enabled and bool(edits.passes))
         self.cancel_ai_button.setVisible(self.ai.busy)
         for widget in (self.thumbnails,self.open_files_button,self.open_folder_button,self.settings_button):
             widget.setEnabled(not self.ai.busy)
@@ -1224,6 +1248,8 @@ class MainWindow(QMainWindow):
         self.note.setText(t("ai_preview_note"))
         self.process_button.setText(t("process_mask"))
         self.cancel_ai_button.setText(t("ai_cancel"))
+        self.revert_ai_button.setText(t("ai_revert"))
+        self.revert_ai_button.setToolTip(t("ai_revert_hint"))
         self.tools['compare'].setToolTip(t('compare_original' if self._after_view else 'compare_result'))
         self.tools['compare'].setAccessibleName(self.tools['compare'].toolTip())
         self.source_value.setText("—" if not self.photos or self.thumbnails.currentRow() < 0 else f"{self.photos[self.thumbnails.currentRow()].width} × {self.photos[self.thumbnails.currentRow()].height} px")
