@@ -235,9 +235,9 @@ class EditorCanvas(PhotoCanvas):
         if placement:
             try:
                 stat=Path(placement.path).stat()
-                key=(placement.path,stat.st_mtime_ns,stat.st_size)
+                key=(placement.path,placement.mode,stat.st_mtime_ns,stat.st_size)
                 if key!=self._logo_key:
-                    self._logo_image=read_logo(placement.path)
+                    self._logo_image=read_logo(placement.path,placement.mode)
             except (OSError,ValueError):
                 self._logo_image=None
         else:self._logo_image=None

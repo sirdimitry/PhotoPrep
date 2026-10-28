@@ -55,7 +55,7 @@ def compose(image,edits,width,height,logo_image=None):
         painter.drawImage(QRectF(0,0,width,height),image,crop)
         logo=edits.logo
         if logo and logo.enabled and logo.opacity>0:
-            asset=logo_image if logo_image is not None else read_logo(logo.path)
+            asset=logo_image if logo_image is not None else read_logo(logo.path,logo.mode)
             painter.setOpacity(logo.opacity)
             painter.drawImage(logo_rect(QRectF(0,0,width,height),logo,asset),asset)
     finally:
@@ -170,9 +170,9 @@ def export_job(request_path):
                 check_signature(logo.path,request['logos'].get(logo.path))
             emit(stage='export_write',index=index,total=len(wanted),name=photo.path.name)
             if logo and logo.enabled and logo.opacity>0:
-                key=(logo.path,*request['logos'][logo.path])
+                key=(logo.path,logo.mode,*request['logos'][logo.path])
                 if key!=asset_key:
-                    asset_image=read_logo(logo.path);asset_key=key
+                    asset_image=read_logo(logo.path,logo.mode);asset_key=key
             image=compose(image,edits,width,height,asset_image if logo and logo.enabled else None)
             check_signature(photo.path,request['sources'][str(photo.path)])
             if logo and logo.enabled and logo.opacity>0:check_signature(logo.path,request['logos'].get(logo.path))

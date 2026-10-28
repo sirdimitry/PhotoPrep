@@ -11,7 +11,7 @@
 ![PhotoPrep — AI cleanup, cropping, branding and batch workflows](assets/github-banner.png)
 
 <p align="center">
-  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.10-FACC15?style=flat-square&labelColor=202227">
+  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.11-FACC15?style=flat-square&labelColor=202227">
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-33373d?style=flat-square">
   <img alt="Language" src="https://img.shields.io/badge/UI-English%20%2B%20Русский-33373d?style=flat-square">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-33373d?style=flat-square"></a>
@@ -44,7 +44,7 @@
 
 ### Get it
 
-**[Download v0.1.0-alpha.10 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.10)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
+**[Download v0.1.0-alpha.11 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.11)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
 
 This early alpha is **ad-hoc signed and not notarized**, so macOS may display a security warning. Verified on macOS 27.2 / Apple Silicon; Intel and other macOS versions have not been tested. See [verified changes](CHANGELOG.md).
 
@@ -79,7 +79,7 @@ Requires **Python 3.11+** and installs **PySide6**. The application does not dow
 | Fit photo in view | `⌘ 0` |
 | Actual pixels (100%) | `⌘ 1` |
 
-Workspace files (`.photoprep.json`) store local image paths and viewing positions, not image copies. Missing sources are reported when reopening; removing a photo from the workspace keeps its original file. Workspace history covers adding/removing photos, mask strokes, removal passes, crop plans and output dimensions. Originals remain read-only. Workspaces with logos use session format 5, storing a relative PNG path and output-relative placement. Formats 1/2/3/4 remain readable. Without a logo, mixed-model recipes use format 4, LaMa-only recipes format 3 and basic workspaces format 2. Older apps cannot open format 5.
+Workspace files (`.photoprep.json`) store local image paths and viewing positions, not image copies. Missing sources are reported when reopening; removing a photo from the workspace keeps its original file. Workspace history covers adding/removing photos, mask strokes, removal passes, crop plans and output dimensions. Originals remain read-only. Workspaces with templates use session format 6; separate logos use format 5, storing a relative PNG path and output-relative placement. Formats 1/2/3/4/5 remain readable. Without a logo, mixed-model recipes use format 4, LaMa-only recipes format 3 and basic workspaces format 2. Older apps cannot open newer session formats.
 
 Tool controls live in the existing inspector, zoom controls sit above the filmstrip, and a shortened photo filename appears beside the app name. Switching tools does not reduce the photo viewport. The output frame stays fixed: drag the photo and scroll to zoom it beneath the frame; output dimensions change only in Settings.
 
@@ -122,7 +122,17 @@ Model attribution and dependency notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_N
 Use the logo tool (`L`) to choose a PNG, reuse the last logo, drag it within the
 output frame, adjust size/opacity or apply its placement to every photo. Undo/redo
 covers logo changes. Before/After compares the original with the edited view.
-Logo PNGs are limited to 4 megapixels and 16 MB; missing assets must be relinked.
+Choose **Folder…** in the logo inspector to connect a local PNG template folder.
+Horizontal 16:9 templates with left placement are listed first, followed by right
+placement; other templates remain available. The app detects transparent layout
+canvases and keeps the visible mark's relative width and edge offsets when the
+output frame changes. Its proportions stay intact. **Separate logo** mode accepts
+a standalone transparent PNG; both modes allow position, size and opacity edits.
+Your output dimensions stay unchanged when choosing a template. Local template
+paths stay in preferences/workspaces; the artwork is not copied into the app or
+repository.
+
+Logo PNGs are limited to 32 megapixels and 32 MB; missing assets must be relinked.
 
 Choose **Export** (`⌘ Shift E`), current photo or all photos, destination, JPEG/PNG
 and JPEG quality. Output uses the exact frame dimensions, such as 1136 × 710.

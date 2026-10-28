@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.1.0-alpha.11 — 2026-10-28
+
+- Connect a local PNG template folder, prioritizing horizontal 16:9 left and
+  right layouts; keep other layouts optional in the same compact inspector.
+- Detect a transparent template canvas, trim empty pixels for preview/export,
+  and preserve relative mark size and edge offsets when output dimensions change.
+  Keep the mark proportional and leave the current output dimensions unchanged.
+- Support standalone transparent PNG logos and explicit template/logo modes.
+- Accept PNG assets up to 32 megapixels / 32 MB, including large 6000 × 4000
+  layout canvases; cache only the trimmed mark for templates.
+- Save template mode in session format 6; formats 1–5 remain readable. Keep
+  template folders and assets local and outside application/repository assets.
+
+Validation: 93 tests passed with offscreen and native macOS rendering, both
+with exit status 0. Ten actual local PNG assets loaded unchanged; 1136 × 710,
+16:9 and portrait frame changes preserved mark proportions. Template PNG export,
+RU/EN and dark/light layouts were checked.
+
 ## v0.1.0-alpha.10 — 2026-10-28
 
 Stage 6: PNG branding and clean, non-destructive image export.

@@ -140,7 +140,7 @@ def test_logo_drag_compare_and_frame_alignment(tmp_path,monkeypatch):
         w._select_tool('logo');w._apply_logo_path(logo)
         assert w.canvas._logo_overlay.isVisible() and w.after_button.isEnabled()
         old=w.workspace.edits[source].logo
-        rect=w.canvas.logo_source_rect;start=w.canvas.mapFromScene(rect.center());end=start-QPoint(80,60)
+        rect=w.canvas.logo_source_rect;start=w.canvas.mapFromScene(rect.center());end=start+QPoint(80,60)
         QTest.mousePress(w.canvas.viewport(),Qt.MouseButton.LeftButton,pos=start);QTest.mouseMove(w.canvas.viewport(),end);QTest.mouseRelease(w.canvas.viewport(),Qt.MouseButton.LeftButton,pos=end)
         assert w.workspace.edits[source].logo!=old
         w.undo();wait(lambda:not w.canvas.loading);assert w.workspace.edits[source].logo==old

@@ -68,6 +68,15 @@ class Preferences:
         self._q.setValue('ai/model',value)
 
     @property
+    def logo_folder(self):
+        value=self._q.value('branding/logo_folder','')
+        return value if isinstance(value,str) and '\x00' not in value else ''
+
+    @logo_folder.setter
+    def logo_folder(self,value):
+        self._q.setValue('branding/logo_folder',str(value))
+
+    @property
     def logo_path(self):
         value=self._q.value('branding/logo_path','')
         return value if isinstance(value,str) else ''

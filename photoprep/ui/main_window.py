@@ -13,7 +13,7 @@ from PySide6.QtGui import QIcon, QImageReader, QPixmap, QKeySequence, QAction
 from PySide6.QtWidgets import (
     QFrame, QFileDialog, QHBoxLayout, QLabel, QListView, QListWidget, QButtonGroup, QSlider, QCheckBox,
     QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QSizePolicy,
-    QSplitter, QStackedWidget, QToolButton, QVBoxLayout, QWidget, QScrollArea,
+    QSplitter, QStackedWidget, QToolButton, QVBoxLayout, QWidget, QScrollArea, QComboBox,
 )
 
 from .. import __version__
@@ -22,7 +22,7 @@ from ..models import Photo, list_folder_images
 from ..settings import Preferences
 from ..workspace import Workspace, ViewState
 from ..editing import PhotoEdits, render_mask
-from ..branding import LogoPlacement, read_logo
+from ..branding import LogoPlacement, read_logo, placement_from_path, template_catalog
 from ..session import load_session, save_session, SessionError
 from .assets import app_icon_path, icon_path, ui_icon
 from .editor import EditorCanvas as PhotoCanvas
@@ -531,6 +531,14 @@ class MainWindow(QMainWindow):
         self.logo_choose.clicked.connect(self._choose_logo);self.logo_last.clicked.connect(self._use_last_logo)
         self.logo_remove=self._compact_tool_button('close',lambda:self._set_logo(None));self.logo_remove.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.logo_remove.setFixedSize(28,28);row.addWidget(self.logo_remove);layout.addLayout(row)
+        row=QHBoxLayout();row.setSpacing(6)
+        self.logo_folder=QPushButton();self.logo_folder.setProperty('compact',True);self.logo_folder.setFixedHeight(28)
+        self.logo_folder.clicked.connect(self._choose_logo_folder);row.addWidget(self.logo_folder)
+        self.logo_library=QComboBox();self.logo_library.setMinimumWidth(0);self.logo_library.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
+        self.logo_library.setMinimumContentsLength(12);self.logo_library.setMaximumWidth(200)
+        self.logo_library.activated.connect(self._choose_catalog_logo);row.addWidget(self.logo_library,stretch=1);layout.addLayout(row)
+        self._load_logo_catalog()
+        self.logo_mode=QComboBox();self.logo_mode.currentIndexChanged.connect(self._logo_mode_changed);layout.addWidget(self.logo_mode)
         self.logo_name=PhotoNameLabel();self.logo_name.setObjectName('SmallHint');layout.addWidget(self.logo_name)
         for key,low,high in (('size',1,94),('opacity',0,100)):
             row=QHBoxLayout();row.setSpacing(4)
@@ -563,17 +571,47 @@ class MainWindow(QMainWindow):
         path,_=QFileDialog.getOpenFileName(self,self.t('logo_choose_title'),self.settings.logo_path or str(Path.home()),'PNG (*.png)')
         if path:self._apply_logo_path(path)
 
+    def _choose_logo_folder(self):
+        folder=QFileDialog.getExistingDirectory(self,self.t('logo_folder_title'),self.settings.logo_folder or str(Path.home()))
+        if folder:
+            self.settings.logo_folder=folder;self._load_logo_catalog()
+            if self.logo_library.count()>1:
+                self.logo_library.setCurrentIndex(1);self._choose_catalog_logo(1)
+
+    def _load_logo_catalog(self):
+        self.logo_library.blockSignals(True);self.logo_library.clear()
+        self.logo_library.addItem(self.t('logo_library'),'')
+        try:entries=template_catalog(self.settings.logo_folder) if self.settings.logo_folder else []
+        except OSError:entries=[]
+        seen=set()
+        for index,(group,label,path) in enumerate(entries):
+            primary=self.t('logo_primary_left' if group==0 else 'logo_primary_right') if group<2 and group not in seen else label
+            seen.add(group)
+            self.logo_library.addItem(primary,str(path))
+            self.logo_library.setItemData(index+1,label,Qt.ItemDataRole.ToolTipRole)
+        self.logo_library.blockSignals(False)
+
+    def _choose_catalog_logo(self,index):
+        path=self.logo_library.itemData(index)
+        if path:self._apply_logo_path(path)
+
+    def _logo_mode_changed(self,index):
+        logo=self.workspace.edits.get(self.workspace.selected,PhotoEdits()).logo
+        if logo:
+            try:placement=placement_from_path(logo.path,self.logo_mode.currentData())
+            except (OSError,ValueError):return
+            self._set_logo(replace(placement,opacity=logo.opacity,enabled=logo.enabled))
+
     def _use_last_logo(self):
         if self.settings.logo_path:self._apply_logo_path(self.settings.logo_path)
 
     def _apply_logo_path(self,path):
         if not self.canvas.has_photo or self.ai.busy:return
-        try:read_logo(path)
+        try:placement=placement_from_path(path)
         except (OSError,ValueError):
             QMessageBox.warning(self,'PhotoPrep',self.t('logo_invalid'));return
         path=str(Path(path).resolve());self.settings.logo_path=path
-        old=self.workspace.edits.get(self.workspace.selected,PhotoEdits()).logo
-        self._set_logo(replace(old,path=path,enabled=True) if old else LogoPlacement(path))
+        self._set_logo(placement)
 
     def _set_logo(self,logo):
         if not self.canvas.has_photo or self.ai.busy:return
@@ -602,6 +640,11 @@ class MainWindow(QMainWindow):
 
     def _refresh_logo_controls(self,enabled):
         logo=self.workspace.edits.get(self.workspace.selected,PhotoEdits()).logo
+        self.logo_folder.setEnabled(not self.ai.busy)
+        self.logo_library.setEnabled(enabled and self.logo_library.count()>1)
+        self.logo_mode.blockSignals(True)
+        self.logo_mode.setCurrentIndex(self.logo_mode.findData(logo.mode if logo else 'logo'))
+        self.logo_mode.setEnabled(enabled and logo is not None);self.logo_mode.blockSignals(False)
         self.logo_choose.setEnabled(enabled)
         self.logo_last.setEnabled(enabled and bool(self.settings.logo_path) and Path(self.settings.logo_path).is_file())
         self.logo_remove.setEnabled(enabled and logo is not None)
@@ -1113,6 +1156,15 @@ class MainWindow(QMainWindow):
         self.fit_crop_button.setToolTip(t("fill_crop"))
         self.clear_crop_button.setText(t("clear_crop"))
         self.logo_choose.setText(t('logo_choose'))
+        self.logo_folder.setText(t('logo_folder'))
+        self.logo_folder.setToolTip(t('logo_folder_title'))
+        selected_template=self.logo_library.currentData()
+        self._load_logo_catalog()
+        self.logo_library.setCurrentIndex(max(0,self.logo_library.findData(selected_template)))
+        self.logo_mode.blockSignals(True)
+        mode=self.logo_mode.currentData() or 'logo';self.logo_mode.clear()
+        for key in ('template','logo'):self.logo_mode.addItem(t('logo_mode_'+key),key)
+        self.logo_mode.setCurrentIndex(self.logo_mode.findData(mode));self.logo_mode.blockSignals(False)
         self.logo_last.setText(t('logo_last'))
         self.logo_remove.setToolTip(t('logo_remove'))
         self.logo_enabled.setText(t('logo_enabled'))
