@@ -51,6 +51,7 @@ def test_about_has_mit_logo_notice_and_public_author_link_in_both_languages(tmp_
         assert 'Copyright (c) 2026 sirdimitry' in dialog.license_text.toPlainText()
         assert 'Сторонние логотипы' in dialog.about_logos.text() and 'не входят в релиз' in dialog.about_logos.text()
         assert 'https://x.com/sirdimitry' in dialog.about_author.text() and '@sirdimitry' in dialog.about_author.text()
+        assert 'https://github.com/sirdimitry' in dialog.about_author.text()
         assert dialog.about_author.openExternalLinks()
         dialog.language_buttons['en'].click()
         assert dialog.tabs.tabText(2)=='About' and 'MIT' in dialog.about_license.text()

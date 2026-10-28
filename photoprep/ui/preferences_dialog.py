@@ -156,7 +156,7 @@ class PreferencesDialog(QDialog):
         layout.addWidget(self.license_text)
         self.about_logos=QLabel();self.about_logos.setWordWrap(True);self.about_logos.setTextFormat(Qt.TextFormat.PlainText);layout.addWidget(self.about_logos)
         layout.addStretch(1)
-        self.about_author=QLabel('<a href="https://x.com/sirdimitry">@sirdimitry</a>')
+        self.about_author=QLabel('<a href="https://x.com/sirdimitry">@sirdimitry</a> · <a href="https://github.com/sirdimitry">GitHub</a>')
         self.about_author.setTextFormat(Qt.TextFormat.RichText);self.about_author.setOpenExternalLinks(True)
         self.about_author.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         layout.addWidget(self.about_author)

@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.0-alpha.15 — 2026-10-28
+
+- Add the author’s public GitHub profile link next to X in Preferences → About.
+
 ## v0.1.0-alpha.14 — 2026-10-28
 
 - Synchronize the template selector and detailed logo controls with the current
