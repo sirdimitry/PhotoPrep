@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.1.0-alpha.6 — 2026-10-28
+
+Stage 4: initial local LaMa inpainting preview.
+
+- Add a pinned 208 MB ONNX model download over HTTPS, atomic installation and full
+  SHA256 verification before inference. Bundle a certificate store for standalone Macs.
+- Run inference/downloads in cancellable child processes; keep the GUI responsive,
+  clean temporary masks/results, and leave source files read-only.
+- Infer a 512px context region and composite only inside the original full-resolution
+  mask. Preserve every unmasked RGBA pixel and the original alpha channel.
+- Add compact inspector processing/cancel and Before/After controls; enable the compare
+  rail button after processing. Invalidate stale previews when source or mask changes.
+- Bound preview memory, support up to 40MP, report failures in RU/EN, and retry corrupt
+  model downloads. Keep model weights, private jobs and all photos out of the package.
+- Add dependency/model notices; reuse the existing Python and project virtual environment.
+
+Validation: 51 tests passed offscreen and with native macOS rendering. Real LaMa
+removed a generated mark, with all pixels outside the mask unchanged. Processing
+through the native GUI completed in about 6.4 seconds on the development Mac.
+Previews are temporary and not stored in sessions; image export remains pending.
+
 ## v0.1.0-alpha.5 — 2026-10-27
 
 - Show the yellow output outline in every editing tool, including brush and eraser.

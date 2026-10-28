@@ -20,7 +20,7 @@ from ..i18n import tr
 from ..models import Photo, list_folder_images
 from ..settings import Preferences
 from ..workspace import Workspace, ViewState
-from ..editing import PhotoEdits
+from ..editing import PhotoEdits, render_mask
 from ..session import load_session, save_session, SessionError
 from .assets import app_icon_path, icon_path, ui_icon
 from .editor import EditorCanvas as PhotoCanvas
@@ -28,6 +28,8 @@ from .preferences_dialog import PreferencesDialog
 from .theme import stylesheet
 from .filmstrip import FilmstripDelegate
 from .widgets import PhotoNameLabel
+from .ai_controller import AIController
+from ..inference import model_path
 
 
 class DropSurface(QFrame):
@@ -99,6 +101,14 @@ class MainWindow(QMainWindow):
         self.workspace = Workspace(output_width=self.settings.output_width, output_height=self.settings.output_height)
         self.session_path: Path | None = None
         self._thumbnail_icons = OrderedDict()
+        self._previews = OrderedDict()
+        self.ai = AIController(self)
+        self.ai.changed.connect(self._refresh_controls)
+        self.ai.progress.connect(self._ai_progress)
+        self.ai.completed.connect(self._ai_completed)
+        self.ai.failed.connect(self._ai_failed)
+        self._ai_stage = None
+        self._ai_percent = 0
         self.setWindowTitle("PhotoPrep")
         self.setWindowIcon(QIcon(app_icon_path()))
         self.setStyleSheet(stylesheet(self.settings.appearance))
@@ -224,6 +234,7 @@ class MainWindow(QMainWindow):
             self.tools[key] = button
             layout.addWidget(button)
         layout.addStretch(1)
+        self.tools["compare"].clicked.connect(lambda:self._show_preview(not self.canvas._preview_active))
         self.rail_info = self._tool_button("info", rail=True)
         self.rail_info.setEnabled(False)
         layout.addWidget(self.rail_info)
@@ -383,11 +394,15 @@ class MainWindow(QMainWindow):
         return options
 
     def _select_tool(self, tool):
+        if self.ai.busy:
+            return
         if not self.tools[tool].isChecked():
             self.tools[tool].setChecked(True)
             return
         self._capture_view()
         self.canvas.set_tool(tool)
+        if tool in ("mask","erase"):
+            self._show_preview(False)
         self.tool_options.setCurrentIndex(1 if tool=="crop" else 0)
         self.tool_options.setVisible(tool!="select")
         self.tool_heading.setText(self.t(tool))
@@ -449,12 +464,116 @@ class MainWindow(QMainWindow):
         self.tool_heading.setObjectName("SectionTitle")
         layout.addWidget(self.tool_heading)
         layout.addWidget(self.tool_options)
+        ai_divider = QFrame()
+        ai_divider.setObjectName('Divider')
+        layout.addWidget(ai_divider)
+        row = QHBoxLayout()
+        self.process_button = QPushButton()
+        self.process_button.setObjectName('Primary')
+        self.process_button.setProperty('compact',True)
+        self.process_button.setFixedHeight(30)
+        self.process_button.clicked.connect(self._process_mask)
+        row.addWidget(self.process_button,stretch=1)
+        self.cancel_ai_button = QPushButton()
+        self.cancel_ai_button.setProperty('compact',True)
+        self.cancel_ai_button.setFixedHeight(30)
+        self.cancel_ai_button.clicked.connect(self._cancel_ai)
+        self.cancel_ai_button.hide()
+        row.addWidget(self.cancel_ai_button)
+        layout.addLayout(row)
+        compare_row = QHBoxLayout()
+        self.compare_group = QButtonGroup(self)
+        self.before_button,self.after_button = QPushButton(),QPushButton()
+        for button,after in ((self.before_button,False),(self.after_button,True)):
+            button.setObjectName('LanguageChoice')
+            button.setProperty('compact',True)
+            button.setFixedHeight(28)
+            button.setCheckable(True)
+            self.compare_group.addButton(button)
+            button.toggled.connect(lambda checked,result=after:self._show_preview(result) if checked else None)
+            compare_row.addWidget(button)
+        self.before_button.setChecked(True)
+        layout.addLayout(compare_row)
+        self.ai_status = QLabel()
+        self.ai_status.setObjectName('SmallHint')
+        self.ai_status.setWordWrap(True)
+        layout.addWidget(self.ai_status)
         layout.addStretch(1)
         self.note = QLabel()
         self.note.setWordWrap(True)
         self.note.setObjectName("SmallHint")
         layout.addWidget(self.note)
         return panel
+
+    def _preview_key(self):
+        path = self.workspace.selected
+        if not path:
+            return None
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        strokes = self.workspace.edits.get(path,PhotoEdits()).strokes
+        return path,stat.st_mtime_ns,stat.st_size,strokes
+
+    def _current_preview(self):
+        return self._previews.get(self._preview_key())
+
+    def _show_preview(self,after):
+        if not hasattr(self,'before_button') or not self.canvas.has_photo:
+            return
+        image = self._current_preview() if after else None
+        if after and image is None:
+            return
+        if after and self.canvas.tool in ('mask','erase'):
+            self._select_tool('select')
+        self.canvas.set_preview(image)
+        button = self.after_button if after else self.before_button
+        if not button.isChecked():
+            button.setChecked(True)
+
+    def _process_mask(self):
+        if self.ai.busy or not self.canvas.has_photo:
+            return
+        self._capture_view()
+        edits = self.workspace.edits.get(self.workspace.selected,PhotoEdits())
+        if not edits.strokes:
+            return
+        photo = self.photos[self.workspace.index]
+        if photo.width*photo.height>40_000_000:
+            self._ai_failed('inference_image_large')
+            return
+        mask = render_mask(photo.width,photo.height,edits.strokes)
+        # An erased mask can have strokes but no remaining painted pixels.
+        if mask.constBits().tobytes().count(b'\x00')==mask.sizeInBytes():
+            self._ai_failed('empty_mask')
+            return
+        self._select_tool('select')
+        self._show_preview(False)
+        self.ai.start(photo.path,mask,self._preview_key())
+
+    def _cancel_ai(self):
+        self._ai_stage = 'cancelled'
+        self.ai.cancel()
+
+    def _ai_progress(self,stage,percent):
+        self._ai_stage,self._ai_percent = stage,percent
+        self.ai_status.setText(self.t('ai_'+stage,percent=percent))
+
+    def _ai_completed(self,key,image):
+        self._ai_stage = None
+        if key!=self._preview_key() or not self.canvas.has_photo:
+            return
+        self._previews[key] = image
+        self._previews.move_to_end(key)
+        while sum(image.sizeInBytes() for image in self._previews.values())>192*1024*1024:
+            self._previews.popitem(last=False)
+        self._show_preview(True)
+        self.statusBar().showMessage(self.t('ai_preview_ready'),6000)
+
+    def _ai_failed(self,error):
+        self._ai_stage = None
+        QMessageBox.warning(self,'PhotoPrep',self.t(error))
 
     def _setup_actions(self):
         self.file_menu = self.menuBar().addMenu("")
@@ -535,6 +654,8 @@ class MainWindow(QMainWindow):
         return icon
 
     def import_paths(self, paths: list[str]):
+        if self.ai.busy:
+            return
         self._capture_view()
         image_paths = []
         for path in paths:
@@ -602,6 +723,8 @@ class MainWindow(QMainWindow):
         self.retranslate()
 
     def select_photo(self, index: int):
+        if self.ai.busy:
+            return
         if not 0 <= index < len(self.photos):
             return
         self._capture_view()
@@ -621,6 +744,8 @@ class MainWindow(QMainWindow):
         if success:
             self.canvas.set_output_dimensions(self.workspace.output_width,self.workspace.output_height)
             self.canvas.set_edits(self.workspace.edits.get(Path(path), PhotoEdits()))
+        if success:
+            self._show_preview(self._current_preview() is not None)
         self._refresh_controls()
         self.statusBar().showMessage(self.t("status_loaded", count=len(self.photos)) if success
                                      else self.t("invalid_image", path=Path(path).name))
@@ -631,22 +756,30 @@ class MainWindow(QMainWindow):
             self.thumbnails.setCurrentRow(index)
 
     def remove_photo(self):
+        if self.ai.busy:
+            return
         self._capture_view()
         if self.workspace.remove_selected():
             self._present_workspace()
             self.statusBar().showMessage(self.t("removed_from_workspace"), 6000)
 
     def undo(self):
+        if self.ai.busy:
+            return
         self._capture_view()
         if self.workspace.undo():
             self._present_workspace()
 
     def redo(self):
+        if self.ai.busy:
+            return
         self._capture_view()
         if self.workspace.redo():
             self._present_workspace()
 
     def new_workspace(self):
+        if self.ai.busy:
+            return
         if not self._confirm_discard():
             return
         self.workspace = Workspace(output_width=self.settings.output_width, output_height=self.settings.output_height)
@@ -659,6 +792,8 @@ class MainWindow(QMainWindow):
             self.open_session_file(Path(path))
 
     def open_session_file(self, path: Path):
+        if self.ai.busy:
+            return
         try:
             workspace, skipped = load_session(path)
         except (OSError, SessionError) as exc:
@@ -715,6 +850,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self._confirm_discard():
+            self.ai.shutdown()
             self.canvas.clear_photo()
             event.accept()
         else:
@@ -726,32 +862,47 @@ class MainWindow(QMainWindow):
         self.export_value.setText(f"{self.workspace.output_width} × {self.workspace.output_height} px")
 
     def _refresh_controls(self):
-        enabled = self.canvas.has_photo
+        enabled = self.canvas.has_photo and not self.ai.busy
         for button in (self.fit_button, self.actual_button, self.zoom_in_button, self.zoom_out_button):
             button.setEnabled(enabled)
         index = self.workspace.index
-        self.previous_button.setEnabled(index > 0)
-        self.next_button.setEnabled(0 <= index < len(self.photos) - 1)
-        self.remove_button.setEnabled(index >= 0)
+        self.previous_button.setEnabled(index > 0 and not self.ai.busy)
+        self.next_button.setEnabled(0 <= index < len(self.photos) - 1 and not self.ai.busy)
+        self.remove_button.setEnabled(index >= 0 and not self.ai.busy)
         for tool in ("mask","erase","crop"):
             self.tools[tool].setEnabled(enabled)
         self.tool_options.setEnabled(enabled)
         edits = self.workspace.edits.get(self.workspace.selected,PhotoEdits())
+        preview = self._current_preview() is not None
+        self.tools['compare'].setEnabled(enabled and preview)
+        self.process_button.setEnabled(enabled and bool(edits.strokes))
+        self.process_button.setToolTip(self.t('ai_download_hint') if not model_path().is_file() else '')
+        self.cancel_ai_button.setVisible(self.ai.busy)
+        self.before_button.setEnabled(enabled and preview)
+        self.after_button.setEnabled(enabled and preview)
+        for widget in (self.thumbnails,self.open_files_button,self.open_folder_button,self.settings_button):
+            widget.setEnabled(not self.ai.busy)
+        if not self.ai.busy:
+            self.ai_status.setText(self.t('ai_cancelled') if self._ai_stage=='cancelled' else self.t('ai_preview_ready' if preview else 'ai_ready'))
         self.clear_mask_button.setEnabled(enabled and bool(edits.strokes))
         self.clear_crop_button.setEnabled(enabled and edits.crop is not None)
         self.reset_crop_button.setEnabled(enabled)
         self.fit_crop_button.setEnabled(enabled)
         self.photo_position.setText(self.t("images_loaded", index=index + 1, total=len(self.photos)) if self.photos else "")
         if hasattr(self, "actions"):
-            self.actions["undo"].setEnabled(self.workspace.can_undo)
-            self.actions["redo"].setEnabled(self.workspace.can_redo)
-            self.actions["remove_photo"].setEnabled(index >= 0)
-            self.actions["previous_photo"].setEnabled(index > 0)
-            self.actions["next_photo"].setEnabled(0 <= index < len(self.photos) - 1)
+            self.actions["undo"].setEnabled(self.workspace.can_undo and not self.ai.busy)
+            self.actions["redo"].setEnabled(self.workspace.can_redo and not self.ai.busy)
+            for key in ("open_photos","open_folder","new_workspace","open_workspace","save_workspace","save_workspace_as"):
+                self.actions[key].setEnabled(not self.ai.busy)
+            self.actions["remove_photo"].setEnabled(index >= 0 and not self.ai.busy)
+            self.actions["previous_photo"].setEnabled(index > 0 and not self.ai.busy)
+            self.actions["next_photo"].setEnabled(0 <= index < len(self.photos) - 1 and not self.ai.busy)
             for key in ("fit", "actual", "zoom_in", "zoom_out", "mask", "erase", "crop", "brush_smaller", "brush_larger"):
                 self.actions[key].setEnabled(enabled)
 
     def open_settings(self):
+        if self.ai.busy:
+            return
         dialog = PreferencesDialog(self.settings, self, dimensions=(self.workspace.output_width,self.workspace.output_height))
         dialog.applied.connect(self._preferences_applied)
         dialog.exec()
@@ -817,14 +968,18 @@ class MainWindow(QMainWindow):
         self.zoom_in_button.setToolTip(t("zoom_in"))
         self.zoom_out_button.setToolTip(t("zoom_out"))
         for key, button in self.tools.items():
-            button.setToolTip(t(key) + (" · " + t("coming_soon") if key not in ("select","mask","erase","crop") else ""))
+            button.setToolTip(t(key) + (" · " + t("coming_soon") if key not in ("select","mask","erase","crop","compare") else ""))
         self.empty.retranslate(t)
         self.strip_title.setText(f'{t("photos")}  ·  {len(self.photos)}')
         self.inspector_label.setText(t("inspect"))
         self.image_heading.setText(t("image"))
         self.source_title.setText(t("source_size"))
         self.export_title.setText(t("export_preset"))
-        self.note.setText(t("stage_ready"))
+        self.note.setText(t("ai_preview_note"))
+        self.process_button.setText(t("process_mask"))
+        self.cancel_ai_button.setText(t("ai_cancel"))
+        self.before_button.setText(t("ai_original"))
+        self.after_button.setText(t("ai_result"))
         self.source_value.setText("—" if not self.photos or self.thumbnails.currentRow() < 0 else f"{self.photos[self.thumbnails.currentRow()].width} × {self.photos[self.thumbnails.currentRow()].height} px")
         self.export_value.setText(f"{self.workspace.output_width} × {self.workspace.output_height} px")
         self.statusBar().showMessage(t("loading_photo") if self.canvas.loading else t("status_loaded", count=len(self.photos)) if self.photos else t("status_empty"))

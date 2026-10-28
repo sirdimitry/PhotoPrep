@@ -17,6 +17,7 @@ iconutil -c icns assets/PhotoPrep.iconset -o assets/app-icon.icns
 "$PYTHON" - <<'ASSETS'
 from pathlib import Path
 import shutil
+from importlib.metadata import distribution
 root = Path.cwd()
 target = root / "work/runtime-assets"
 if target.exists():
@@ -30,6 +31,22 @@ for relative in paths:
     if not source.is_file() or source.is_symlink():
         raise RuntimeError("Missing or symlinked runtime asset: " + str(relative))
     shutil.copyfile(source, target / relative)
+notices = root / 'work/runtime-notices'
+if notices.exists():
+    shutil.rmtree(notices)
+notices.mkdir()
+shutil.copyfile(root/'THIRD_PARTY_NOTICES.md',notices/'README.md')
+shutil.copyfile(root/'LICENSE',notices/'PhotoPrep-LICENSE')
+for name in ('onnxruntime','numpy','protobuf','certifi'):
+    package = distribution(name)
+    for relative in package.files or ():
+        if not any(token in str(relative).lower() for token in ('license','copying','notice')):
+            continue
+        source = Path(package.locate_file(relative))
+        if source.is_file() and not source.is_symlink():
+            destination = notices/name/str(relative)
+            destination.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copyfile(source,destination)
 ASSETS
 "$PYTHON" -m PyInstaller \
   --noconfirm --clean --windowed --onedir \
@@ -37,6 +54,7 @@ ASSETS
   --osx-bundle-identifier "com.sirdimitry.PhotoPrep" \
   --target-architecture "$ARCH" \
   --add-data "work/runtime-assets:assets" \
+  --add-data "work/runtime-notices:third-party" \
   launcher.py
 
 "$PYTHON" - <<'PY'

@@ -8,10 +8,13 @@ from PySide6.QtWidgets import QApplication
 
 from . import __version__
 from .ui.assets import app_icon_path
-from .ui.main_window import MainWindow
 
 
 def main() -> int:
+    if len(sys.argv)>1 and sys.argv[1]=="--photoprep-worker":
+        from .inference import worker_main
+        return worker_main(sys.argv[2:])
+    from .ui.main_window import MainWindow
     app = QApplication.instance() or QApplication(sys.argv)
     app.setOrganizationName("sirdimitry")
     app.setApplicationName("PhotoPrep")

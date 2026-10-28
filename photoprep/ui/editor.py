@@ -51,6 +51,8 @@ class EditorCanvas(PhotoCanvas):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._original_pixmap = None
+        self._preview_active = False
         self.tool = 'select'
         self.brush_size = 40
         self.output_width, self.output_height = 1136, 710
@@ -135,6 +137,8 @@ class EditorCanvas(PhotoCanvas):
     def _clear_image(self):
         self.finish_edit()
         self._mask_overlay = None
+        self._original_pixmap = None
+        self._preview_active = False
         self._cursor_point = None
         self._crop_drag = None
         self._crop = None
@@ -151,6 +155,8 @@ class EditorCanvas(PhotoCanvas):
         self._update_rulers()
 
     def _apply_image(self, path, image):
+        self._original_pixmap = QPixmap.fromImage(image)
+        self._preview_active = False
         self._applying_image = True
         try:
             super()._apply_image(path, image)
@@ -162,12 +168,23 @@ class EditorCanvas(PhotoCanvas):
         self.set_tool(self.tool)
         self._update_rulers()
 
+    def set_preview(self,image=None):
+        if not self.has_photo or self._original_pixmap is None:
+            return
+        if image is not None and image.size()!=self._original_pixmap.size():
+            raise ValueError('Preview dimensions do not match source')
+        self._preview_active = image is not None
+        self._pixmap_item.setPixmap(QPixmap.fromImage(image) if image is not None else self._original_pixmap)
+        if self._mask_overlay:
+            self._mask_overlay.setVisible(self.mask_visible and not self._preview_active)
+        self.viewport().update()
+
     def set_edits(self, edits):
         self.edits = edits
         self._points = None
         if self._mask_overlay:
             self._mask_overlay.rebuild(edits.strokes)
-            self._mask_overlay.setVisible(self.mask_visible)
+            self._mask_overlay.setVisible(self.mask_visible and not self._preview_active)
         if self.tool == 'crop' and self.has_photo and not self._applying_image:
             self._enter_crop()
         self.crop_changed.emit()
@@ -268,7 +285,7 @@ class EditorCanvas(PhotoCanvas):
     def set_mask_visible(self, value):
         self.mask_visible = value
         if self._mask_overlay:
-            self._mask_overlay.setVisible(value)
+            self._mask_overlay.setVisible(value and not self._preview_active)
 
     def _commit(self, edits):
         if edits != self.edits and self.current_path:
