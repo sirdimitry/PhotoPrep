@@ -11,7 +11,7 @@
 ![PhotoPrep — AI cleanup, cropping, branding and batch workflows](assets/github-banner.png)
 
 <p align="center">
-  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.4-FACC15?style=flat-square&labelColor=202227">
+  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.5-FACC15?style=flat-square&labelColor=202227">
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-33373d?style=flat-square">
   <img alt="Language" src="https://img.shields.io/badge/UI-English%20%2B%20Русский-33373d?style=flat-square">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-33373d?style=flat-square"></a>
@@ -30,10 +30,11 @@
 | Open individual photos or an image folder; photo filmstrip | ✅ Available now |
 | Save/open a local workspace, remember per-photo zoom/pan | ✅ Available now |
 | Undo/redo photo imports and removals; previous/next navigation | ✅ Available now |
-| Dark graphite interface with yellow accents | ✅ Available now |
+| Dark/light appearance with yellow accents | ✅ Available now |
 | English/Russian UI, switchable in Preferences | ✅ Available now |
 | Zoom with mouse wheel, drag to pan, 100%, Fit view | ✅ Available now |
 | Default export preset **1136 × 710**, editable in Advanced Preferences | ✅ Saved with workspace; export pending |
+| Always-visible yellow output outline, output-pixel rulers and subtle checkerboard canvas | ✅ Available now |
 | Paint and erase a mask, preview it over the photo | ✅ Available now |
 | Local-only AI logo removal, change pixels only inside mask | 🛠 Planned |
 | Select and download compatible compact AI models | 🛠 Planned |
@@ -43,7 +44,7 @@
 
 ### Get it
 
-**[Download v0.1.0-alpha.4 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.4)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
+**[Download v0.1.0-alpha.5 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.5)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
 
 This early alpha is **ad-hoc signed and not notarized**, so macOS may display a security warning. Verified on macOS 27.2 / Apple Silicon; Intel and other macOS versions have not been tested. See [verified changes](CHANGELOG.md).
 

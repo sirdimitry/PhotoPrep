@@ -5,12 +5,13 @@ from dataclasses import replace
 import math
 
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPen
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QBrush, QPixmap
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsView
 
 from ..editing import MaskStroke, CropRect, PhotoEdits, fit_crop, paint_stroke
 from .canvas import PhotoCanvas
 from ..workspace import ViewState
+from .guides import PixelRuler, RulerCorner, RULER_SIZE
 
 
 class MaskOverlay(QGraphicsItem):
@@ -52,6 +53,7 @@ class EditorCanvas(PhotoCanvas):
         super().__init__(parent)
         self.tool = 'select'
         self.brush_size = 40
+        self.output_width, self.output_height = 1136, 710
         self.crop_ratio = 1136 / 710
         self.edits = PhotoEdits()
         self.mask_visible = True
@@ -66,6 +68,69 @@ class EditorCanvas(PhotoCanvas):
         self._applying_image = False
         self._placing_crop = False
         self.setMouseTracking(True)
+        self.appearance = 'dark'
+        self.set_appearance('dark')
+        self.setViewportMargins(RULER_SIZE,RULER_SIZE,0,0)
+        self.horizontal_ruler = PixelRuler(self,True)
+        self.vertical_ruler = PixelRuler(self,False)
+        self.ruler_corner = RulerCorner(self)
+        self.zoom_changed.connect(self._update_rulers)
+        self.crop_changed.connect(self._update_rulers)
+        self.horizontalScrollBar().valueChanged.connect(self._update_rulers)
+        self.verticalScrollBar().valueChanged.connect(self._update_rulers)
+        self._layout_rulers()
+
+    def set_appearance(self,appearance):
+        self.appearance = appearance
+        light = appearance == 'light'
+        self.guide_colors = ({'ruler':'#EDF0F4','line':'#CCD3DB','text':'#5B6675','accent':'#8E6900'} if light else
+                             {'ruler':'#202328','line':'#363D47','text':'#9DA7B5','accent':'#FACC15'})
+        self.checker_colors = ('#ECEFF3','#E4E8ED') if light else ('#171A1E','#1C1F24')
+        tile = QPixmap(16,16)
+        tile.fill(QColor(self.checker_colors[0]))
+        painter = QPainter(tile)
+        painter.fillRect(0,0,8,8,QColor(self.checker_colors[1]))
+        painter.fillRect(8,8,8,8,QColor(self.checker_colors[1]))
+        painter.end()
+        self._checker_brush = QBrush(tile)
+        self._update_rulers()
+        self.viewport().update()
+
+    def set_output_dimensions(self,width,height):
+        self.output_width,self.output_height = width,height
+        self.set_crop_ratio(width/height)
+
+    @property
+    def output_frame_rect(self):
+        """Show the planned result in source view; anchor it while editing the crop."""
+        if not self.has_photo:
+            return QRectF()
+        if self.tool == 'crop':
+            return self.crop_frame_rect
+        bounds = self._pixmap_item.boundingRect()
+        source = (self.edits.crop or self._default_crop()).pixels(bounds.width(),bounds.height())
+        return self.viewportTransform().mapRect(source)
+
+    def _layout_rulers(self):
+        if not hasattr(self,'horizontal_ruler'):
+            return
+        viewport = self.viewport().geometry()
+        self.horizontal_ruler.setGeometry(viewport.x(),0,viewport.width(),RULER_SIZE)
+        self.vertical_ruler.setGeometry(0,viewport.y(),RULER_SIZE,viewport.height())
+        self.ruler_corner.setGeometry(0,0,RULER_SIZE,RULER_SIZE)
+        self._update_rulers()
+
+    def _update_rulers(self,*args):
+        for name in ('horizontal_ruler','vertical_ruler','ruler_corner'):
+            widget = getattr(self,name,None)
+            if widget is not None:
+                widget.update()
+
+    def drawBackground(self,painter,rect):
+        painter.save()
+        painter.resetTransform()
+        painter.fillRect(self.viewport().rect(),self._checker_brush)
+        painter.restore()
 
     def _clear_image(self):
         self.finish_edit()
@@ -83,6 +148,7 @@ class EditorCanvas(PhotoCanvas):
             super()._clear_image()
         finally:
             self._restoring = False
+        self._update_rulers()
 
     def _apply_image(self, path, image):
         self._applying_image = True
@@ -94,6 +160,7 @@ class EditorCanvas(PhotoCanvas):
         self.scene().addItem(self._mask_overlay)
         self.set_edits(self.edits)
         self.set_tool(self.tool)
+        self._update_rulers()
 
     def set_edits(self, edits):
         self.edits = edits
@@ -104,6 +171,7 @@ class EditorCanvas(PhotoCanvas):
         if self.tool == 'crop' and self.has_photo and not self._applying_image:
             self._enter_crop()
         self.crop_changed.emit()
+        self.viewport().update()
 
     @property
     def crop_frame_rect(self):
@@ -152,6 +220,7 @@ class EditorCanvas(PhotoCanvas):
             self._placing_crop = False
         self.crop_changed.emit()
         self.viewport().update()
+        self.viewport().update()
 
     def _leave_crop(self):
         self._restoring = True
@@ -190,6 +259,7 @@ class EditorCanvas(PhotoCanvas):
         if self.tool == 'crop' and self.has_photo and not self._applying_image:
             self._enter_crop()
         self.crop_changed.emit()
+        self.viewport().update()
 
     def set_brush_size(self, value):
         self.brush_size = max(2,min(512,int(value)))
@@ -367,6 +437,7 @@ class EditorCanvas(PhotoCanvas):
         super().resizeEvent(event)
         if getattr(self,'tool','select')=='crop' and self.has_photo and self._crop is not None:
             self._place_crop(self._crop)
+        self._layout_rulers()
 
     def leaveEvent(self,event):
         self._cursor_point = None
@@ -386,26 +457,30 @@ class EditorCanvas(PhotoCanvas):
 
     def drawForeground(self,painter,rect):
         super().drawForeground(painter,rect)
-        if self.tool=='crop' and self.has_photo:
+        if self.has_photo:
             painter.save()
             painter.resetTransform()
-            frame,bounds=self.crop_frame_rect,QRectF(self.viewport().rect())
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(0,0,0,135))
-            for outside in (QRectF(0,0,bounds.width(),frame.top()),
-                            QRectF(0,frame.bottom(),bounds.width(),bounds.height()-frame.bottom()),
-                            QRectF(0,frame.top(),frame.left(),frame.height()),
-                            QRectF(frame.right(),frame.top(),bounds.width()-frame.right(),frame.height())):
-                painter.drawRect(outside)
+            frame,bounds=self.output_frame_rect,QRectF(self.viewport().rect())
+            if self.tool=='crop':
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(0,0,0,95 if self.appearance=='light' else 135))
+                for outside in (QRectF(0,0,bounds.width(),frame.top()),
+                                QRectF(0,frame.bottom(),bounds.width(),bounds.height()-frame.bottom()),
+                                QRectF(0,frame.top(),frame.left(),frame.height()),
+                                QRectF(frame.right(),frame.top(),bounds.width()-frame.right(),frame.height())):
+                    painter.drawRect(outside)
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(QPen(QColor('#FACC15'),1.5))
+            painter.setPen(QPen(QColor(0,0,0,155),3.5))
             painter.drawRect(frame)
-            painter.setPen(QPen(QColor(255,255,255,110),1))
-            for fraction in (1/3,2/3):
-                painter.drawLine(QPointF(frame.left()+frame.width()*fraction,frame.top()),QPointF(frame.left()+frame.width()*fraction,frame.bottom()))
-                painter.drawLine(QPointF(frame.left(),frame.top()+frame.height()*fraction),QPointF(frame.right(),frame.top()+frame.height()*fraction))
+            painter.setPen(QPen(QColor('#FACC15'),1.8))
+            painter.drawRect(frame)
+            if self.tool=='crop':
+                painter.setPen(QPen(QColor(255,255,255,110),1))
+                for fraction in (1/3,2/3):
+                    painter.drawLine(QPointF(frame.left()+frame.width()*fraction,frame.top()),QPointF(frame.left()+frame.width()*fraction,frame.bottom()))
+                    painter.drawLine(QPointF(frame.left(),frame.top()+frame.height()*fraction),QPointF(frame.right(),frame.top()+frame.height()*fraction))
             painter.restore()
-        elif self.has_photo and self.tool in ('mask','erase') and self._cursor_point is not None and not self._pan_held:
+        if self.has_photo and self.tool in ('mask','erase') and self._cursor_point is not None and not self._pan_held:
             pen=QPen(QColor('#FFFFFF'),1)
             pen.setCosmetic(True)
             painter.setPen(pen)

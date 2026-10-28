@@ -36,9 +36,6 @@ QToolButton#RailButton:checked { background: #48432B; border-left: 3px solid #FA
 QToolButton#HeaderButton { background: transparent; border: 0; padding: 4px; }
 QToolButton#HeaderButton:hover { background: #373B41; }
 QListWidget { background: transparent; border: 0; outline: none; }
-QListWidget::item { border-radius: 8px; background: #2B2E34; border: 2px solid transparent; padding: 5px; margin: 2px; }
-QListWidget::item:selected { background: #35362B; border: 2px solid #FACC15; }
-QListWidget::item:hover { background: #383C43; }
 QScrollBar:horizontal, QScrollBar:vertical { background: #222428; border: 0; height: 9px; width: 9px; }
 QScrollBar::handle:horizontal, QScrollBar::handle:vertical { background: #555A63; border-radius: 4px; min-width: 25px; min-height: 25px; }
 QScrollBar::add-line, QScrollBar::sub-line { width: 0px; height: 0px; }
@@ -57,3 +54,30 @@ QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; }
 QSplitter::handle { background: #31343A; width: 1px; }
 QScrollArea { background: transparent; border: none; }
 """
+
+
+# Replace each original colour once, so light colours cannot be remapped again.
+LIGHT_COLORS = {
+    '#1C1E22':'#F2F4F7', '#EBEDF0':'#26313F', '#25272B':'#FFFFFF',
+    '#373A40':'#D5DAE1', '#24262A':'#F7F8FA', '#383B41':'#D5DAE1',
+    '#222428':'#F1F3F6', '#363940':'#D5DAE1', '#14161A':'#E9EDF2',
+    '#4B5059':'#BEC6D0', '#1F2126':'#F1F3F6', '#888D97':'#657181',
+    '#F2F3F5':'#273240', '#9DA2AC':'#657181', '#3C3723':'#FFF3BA',
+    '#E8C44F':'#806000', '#2A2D32':'#FFFFFF', '#393C42':'#D2D8E0',
+    '#30343A':'#FFFFFF', '#E6E9EC':'#26313F', '#41454D':'#C8D0DA',
+    '#40454D':'#E6EBF1', '#555B65':'#A9B4C1', '#4A505B':'#D7DFE8',
+    '#6F737C':'#8C95A1', '#292C31':'#E9EDF2', '#33363B':'#DCE1E7',
+    '#C6CAD1':'#4D5A6C', '#3B3F46':'#E5EAF0', '#48432B':'#FFF1B1',
+    '#373B41':'#E5EAF0', '#555A63':'#ADB7C4', '#9EA2AC':'#657181',
+    '#494C53':'#C8D0DA', '#31353B':'#FFFFFF', '#EFF1F3':'#26313F',
+    '#555138':'#FFF1B1', '#3D424A':'#D0D7E0', '#34383F':'#FFFFFF',
+    '#535963':'#B8C3D0', '#40434A':'#CCD4DE', '#31343A':'#D5DAE1',
+}
+
+def stylesheet(appearance='dark'):
+    import re
+    base = STYLESHEET + "\nQFrame#HeaderDivider { background: #373A40; }"
+    if appearance == 'light':
+        base = re.sub(r'#[0-9A-Fa-f]{6}',lambda match:LIGHT_COLORS.get(match[0],match[0]),base)
+        base += "\nQPushButton#LanguageChoice:checked { color: #725500; }"
+    return base

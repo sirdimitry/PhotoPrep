@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 
 from ..i18n import tr
 from ..settings import Preferences
-from .theme import STYLESHEET
+from .theme import stylesheet
 
 
 class DimensionInput(QLineEdit):
@@ -40,7 +40,7 @@ class PreferencesDialog(QDialog):
     def __init__(self, settings: Preferences, parent=None, *, dimensions=None):
         super().__init__(parent)
         self.settings = settings
-        self.setStyleSheet(STYLESHEET)
+        self.setStyleSheet(stylesheet(settings.appearance))
         self.setFixedWidth(520)
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 24, 24, 22)
@@ -68,6 +68,23 @@ class PreferencesDialog(QDialog):
             language_row.addWidget(button, stretch=1)
             button.toggled.connect(lambda checked: self.retranslate() if checked else None)
         general_layout.addLayout(language_row)
+        self.appearance_label = QLabel()
+        general_layout.addWidget(self.appearance_label)
+        appearance_row = QHBoxLayout()
+        appearance_row.setSpacing(10)
+        self.appearance_group = QButtonGroup(self)
+        self.appearance_buttons = {}
+        for code in ('dark','light'):
+            button = QPushButton()
+            button.setObjectName('LanguageChoice')
+            button.setCheckable(True)
+            button.setMinimumHeight(32)
+            button.setChecked(code == settings.appearance)
+            self.appearance_group.addButton(button)
+            self.appearance_buttons[code] = button
+            appearance_row.addWidget(button,stretch=1)
+            button.toggled.connect(lambda checked: self.setStyleSheet(stylesheet(self.selected_appearance)) if checked else None)
+        general_layout.addLayout(appearance_row)
         root.addWidget(self.general)
 
         self.advanced_toggle = QToolButton()
@@ -122,6 +139,10 @@ class PreferencesDialog(QDialog):
     def selected_language(self):
         return next(code for code, button in self.language_buttons.items() if button.isChecked())
 
+    @property
+    def selected_appearance(self):
+        return next(code for code,button in self.appearance_buttons.items() if button.isChecked())
+
     def _toggle_advanced(self, checked):
         self.advanced.setVisible(checked)
         self.retranslate()
@@ -133,6 +154,9 @@ class PreferencesDialog(QDialog):
         self.setWindowTitle(t("preferences_title"))
         self.general.setTitle(t("general"))
         self.language_label.setText(t("language"))
+        self.appearance_label.setText(t('appearance'))
+        for code,button in self.appearance_buttons.items():
+            button.setText(t(code+'_theme'))
         self.advanced_toggle.setText(("▾  " if self.advanced_toggle.isChecked() else "▸  ") + t("output_advanced"))
         self.width_label.setText(t("width"))
         self.height_label.setText(t("height"))
@@ -143,6 +167,7 @@ class PreferencesDialog(QDialog):
     def apply_and_close(self):
         if not (self.width_input.hasAcceptableInput() and self.height_input.hasAcceptableInput()):
             return
+        self.settings.appearance = self.selected_appearance
         self.settings.language = self.selected_language
         self.settings.output_width = self.width_input.value()
         self.settings.output_height = self.height_input.value()

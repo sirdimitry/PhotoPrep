@@ -43,3 +43,14 @@ class Preferences:
     @output_height.setter
     def output_height(self, value: int) -> None:
         self._q.setValue("export/height", int(value))
+
+    @property
+    def appearance(self) -> str:
+        value = self._q.value("ui/appearance", "dark")
+        return value if value in ("dark", "light") else "dark"
+
+    @appearance.setter
+    def appearance(self, value: str) -> None:
+        if value not in ("dark", "light"):
+            raise ValueError("Unsupported appearance")
+        self._q.setValue("ui/appearance", value)

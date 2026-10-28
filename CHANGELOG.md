@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.1.0-alpha.5 — 2026-10-27
+
+- Show the yellow output outline in every editing tool, including brush and eraser.
+- Add thin top/left rulers in output pixels, with exact edges such as 1136 and 710.
+  Rulers follow the planned crop during viewing and the fixed frame during cropping.
+- Paint a subtle checkerboard outside the image, with saved dark/light appearance
+  choices in bilingual Preferences. Recolour controls and icons for each theme.
+- Draw thumbnail selection borders around images only; place filenames in a separate
+  row below, with enough room even when the horizontal scrollbar is visible.
+
+Validation: 45 tests passed offscreen and in a native macOS GUI session, including
+rendered yellow borders in all tools, ruler mapping, fixed-frame zoom, checkerboard
+colours, thumbnail caption clearance and appearance save/cancel/restart.
+Original images remain read-only; AI inference and image export remain pending.
+
 ## v0.1.0-alpha.4 — 2026-10-27
 
 Stage 3: mask tools, a fixed output frame and compact controls.

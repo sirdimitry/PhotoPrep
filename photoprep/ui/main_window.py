@@ -22,10 +22,11 @@ from ..settings import Preferences
 from ..workspace import Workspace, ViewState
 from ..editing import PhotoEdits
 from ..session import load_session, save_session, SessionError
-from .assets import app_icon_path, icon_path
+from .assets import app_icon_path, icon_path, ui_icon
 from .editor import EditorCanvas as PhotoCanvas
 from .preferences_dialog import PreferencesDialog
-from .theme import STYLESHEET
+from .theme import stylesheet
+from .filmstrip import FilmstripDelegate
 from .widgets import PhotoNameLabel
 
 
@@ -52,13 +53,13 @@ class DropSurface(QFrame):
         inner.addWidget(graphic)
         self.title = QLabel()
         self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.title.setStyleSheet("font-size:22px;font-weight:750;color:#F7F7F8;background:transparent;border:0")
+        self.title.setStyleSheet("font-size:22px;font-weight:750;background:transparent;border:0")
         inner.addWidget(self.title)
         self.hint = QLabel()
         self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.hint.setWordWrap(True)
         self.hint.setObjectName("Muted")
-        self.hint.setStyleSheet("background:transparent; border:0; color:#A7ABB3")
+        self.hint.setStyleSheet("background:transparent; border:0")
         inner.addWidget(self.hint)
         self.open_button = QPushButton()
         self.open_button.setObjectName("Primary")
@@ -68,7 +69,7 @@ class DropSurface(QFrame):
         self.formats = QLabel()
         self.formats.setObjectName("SmallHint")
         self.formats.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.formats.setStyleSheet("background:transparent; border:0; color:#7D848D")
+        self.formats.setStyleSheet("background:transparent; border:0")
         inner.addWidget(self.formats)
         self.layout_.addWidget(self.panel, alignment=Qt.AlignmentFlag.AlignCenter)
         self.layout_.addStretch(1)
@@ -100,7 +101,7 @@ class MainWindow(QMainWindow):
         self._thumbnail_icons = OrderedDict()
         self.setWindowTitle("PhotoPrep")
         self.setWindowIcon(QIcon(app_icon_path()))
-        self.setStyleSheet(STYLESHEET)
+        self.setStyleSheet(stylesheet(self.settings.appearance))
         self.resize(1440, 900)
         self.setMinimumSize(940, 620)
 
@@ -114,6 +115,7 @@ class MainWindow(QMainWindow):
         self.statusBar().setSizeGripEnabled(False)
         self.statusBar().showMessage(self.t("status_empty"))
         self._setup_actions()
+        self._apply_appearance()
         self.retranslate()
 
     @property
@@ -126,7 +128,8 @@ class MainWindow(QMainWindow):
     def _tool_button(self, icon: str, label: str = "", *, rail: bool = False) -> QToolButton:
         button = QToolButton()
         button.setIcon(QIcon(icon_path(icon)))
-        button.setIconSize(QSize(21, 21))
+        button.setProperty("iconName",icon)
+        button.setIconSize(QSize(21,21) if rail else QSize(16,16))
         button.setText(label)
         if rail:
             button.setObjectName("RailButton")
@@ -158,7 +161,7 @@ class MainWindow(QMainWindow):
         layout.addSpacing(8)
         header_separator = QFrame()
         header_separator.setFixedSize(1, 26)
-        header_separator.setStyleSheet("background:#3A3D43")
+        header_separator.setObjectName("HeaderDivider")
         layout.addWidget(header_separator)
         layout.addSpacing(8)
         self.open_files_button = QPushButton()
@@ -299,7 +302,10 @@ class MainWindow(QMainWindow):
         self.thumbnails.setFlow(QListView.Flow.LeftToRight)
         self.thumbnails.setWrapping(False)
         self.thumbnails.setIconSize(QSize(116, 65))
-        self.thumbnails.setGridSize(QSize(140, 94))
+        self.thumbnails.setGridSize(QSize(140, 96))
+        self.filmstrip_delegate = FilmstripDelegate(self.settings.appearance,self.thumbnails)
+        self.thumbnails.setItemDelegate(self.filmstrip_delegate)
+        self.thumbnails.setMouseTracking(True)
         self.thumbnails.setSpacing(1)
         self.thumbnails.setUniformItemSizes(True)
         self.thumbnails.setHorizontalScrollMode(QListView.ScrollMode.ScrollPerPixel)
@@ -312,6 +318,7 @@ class MainWindow(QMainWindow):
         button=QToolButton()
         button.setObjectName("CompactAction")
         button.setIcon(QIcon(icon_path(icon)))
+        button.setProperty("iconName",icon)
         button.setIconSize(QSize(16,16))
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         button.setFixedHeight(28)
@@ -570,14 +577,14 @@ class MainWindow(QMainWindow):
         self.setWindowModified(self.workspace.dirty)
 
     def _present_workspace(self):
-        self.canvas.set_crop_ratio(self.workspace.output_width/self.workspace.output_height)
+        self.canvas.set_output_dimensions(self.workspace.output_width,self.workspace.output_height)
         self.thumbnails.blockSignals(True)
         try:
             self.thumbnails.clear()
             for photo in self.photos:
                 item = QListWidgetItem(self._thumbnail(photo) or QIcon(), photo.path.name)
                 item.setToolTip(str(photo.path))
-                item.setSizeHint(QSize(140, 94))
+                item.setSizeHint(QSize(140, 96))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
                 self.thumbnails.addItem(item)
             self.thumbnails.setCurrentRow(self.workspace.index)
@@ -612,7 +619,7 @@ class MainWindow(QMainWindow):
 
     def _photo_loaded(self, path, success):
         if success:
-            self.canvas.set_crop_ratio(self.workspace.output_width/self.workspace.output_height)
+            self.canvas.set_output_dimensions(self.workspace.output_width,self.workspace.output_height)
             self.canvas.set_edits(self.workspace.edits.get(Path(path), PhotoEdits()))
         self._refresh_controls()
         self.statusBar().showMessage(self.t("status_loaded", count=len(self.photos)) if success
@@ -749,10 +756,24 @@ class MainWindow(QMainWindow):
         dialog.applied.connect(self._preferences_applied)
         dialog.exec()
 
+    def _apply_appearance(self):
+        appearance = self.settings.appearance
+        self.setStyleSheet(stylesheet(appearance))
+        self.canvas.set_appearance(appearance)
+        self.filmstrip_delegate.appearance = appearance
+        self.thumbnails.viewport().update()
+        for button in self.findChildren(QToolButton):
+            name = button.property('iconName')
+            if name and button not in (self.previous_button,self.next_button):
+                button.setIcon(ui_icon(name,appearance))
+        for button,name in ((self.open_files_button,'files'),(self.open_folder_button,'folder'),(self.export_button,'export')):
+            button.setIcon(ui_icon(name,appearance,button.objectName()=='Primary'))
+
     def _preferences_applied(self):
         self._capture_view()
         self.workspace.set_output_size(self.settings.output_width,self.settings.output_height)
-        self.canvas.set_crop_ratio(self.workspace.output_width/self.workspace.output_height)
+        self._apply_appearance()
+        self.canvas.set_output_dimensions(self.workspace.output_width,self.workspace.output_height)
         if self.workspace.selected:
             self.canvas.set_edits(self.workspace.edits.get(self.workspace.selected,PhotoEdits()))
         self.retranslate()
