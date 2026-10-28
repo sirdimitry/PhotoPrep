@@ -11,7 +11,7 @@
 ![PhotoPrep — AI cleanup, cropping, branding and batch workflows](assets/github-banner.png)
 
 <p align="center">
-  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.13-FACC15?style=flat-square&labelColor=202227">
+  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.14-FACC15?style=flat-square&labelColor=202227">
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-33373d?style=flat-square">
   <img alt="Language" src="https://img.shields.io/badge/UI-English%20%2B%20Русский-33373d?style=flat-square">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-33373d?style=flat-square"></a>
@@ -44,7 +44,7 @@
 
 ### Get it
 
-**[Download v0.1.0-alpha.13 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.13)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
+**[Download v0.1.0-alpha.14 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.14)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
 
 This early alpha is **ad-hoc signed and not notarized**, so macOS may display a security warning. Verified on macOS 27.2 / Apple Silicon; Intel and other macOS versions have not been tested. See [verified changes](CHANGELOG.md).
 
@@ -174,3 +174,15 @@ Preferences → About includes the full MIT License, a logo-use notice and
 [@sirdimitry on X](https://x.com/sirdimitry). Third-party logos and branded templates
 are not bundled. Users choose their own artwork and are responsible for permission
 to use it; PhotoPrep's MIT licence grants no rights to third-party marks.
+
+### Logos across a collection
+
+Logo controls reflect the current photo. If no logo is applied, detailed placement
+controls are hidden and the template list has no active selection. **Enable logo
+on all photos** uses the current or last configured mark, enables it throughout the
+current collection and refreshes the visible photo immediately, preserving retouch
+and crop plans. The operation is one undo step.
+
+Export defaults to **all photos** when a collection contains multiple images.
+Choose JPEG or PNG once for the entire selection; the current-photo option remains
+available. Files still save beside their originals with collision-safe `-logo` names.

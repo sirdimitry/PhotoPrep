@@ -8,6 +8,9 @@ Language = Literal["en", "ru"]
 
 STRINGS = {
     "en": {
+        'logo_not_applied': 'No logo on this photo. Choose a PNG, use Last used, or enable the logo on all photos.',
+        'export_common_format': 'One format for all selected photos',
+        'export_start_all': 'Export all ({count})',
         'about_tab': 'About',
         'about_license': 'PhotoPrep is free software under the MIT License, provided without warranty. Bundled components and models have their own licences.',
         'about_logos': 'No third-party logos or branded templates are included in the release. You choose and add your own logos, and are responsible for having permission to use them. PhotoPrep’s MIT licence does not grant rights to third-party marks.',
@@ -26,7 +29,7 @@ STRINGS = {
         'logo_choose_title': 'Choose a PNG logo',
         'logo_remove': 'Remove logo from this photo',
         'logo_enabled': 'Show',
-        'logo_all': 'Apply to all',
+        'logo_all': 'Enable logo on all photos',
         'logo_size': 'Size',
         'logo_opacity': 'Opacity',
         'logo_hint': 'Templates preserve relative size and edge offsets as the frame changes. Drag to adjust; the mark keeps its proportions.',
@@ -216,6 +219,9 @@ STRINGS = {
         "photos_empty": "No photos yet",
     },
     "ru": {
+        'logo_not_applied': 'На этом фото нет логотипа. Выберите PNG, нажмите «Последний» или включите лого на всех фото.',
+        'export_common_format': 'Единый формат для выбранных фото',
+        'export_start_all': 'Экспортировать все ({count})',
         'about_tab': 'О программе',
         'about_license': 'PhotoPrep — свободное ПО под лицензией MIT, без гарантий. Компоненты и модели распространяются по собственным лицензиям.',
         'about_logos': 'Сторонние логотипы и брендированные шаблоны не входят в релиз. Вы сами выбираете и добавляете логотипы и отвечаете за наличие прав на их использование. Лицензия MIT на PhotoPrep не предоставляет прав на чужие знаки.',
@@ -234,7 +240,7 @@ STRINGS = {
         'logo_choose_title': 'Выберите PNG-логотип',
         'logo_remove': 'Убрать логотип с этого фото',
         'logo_enabled': 'Показать',
-        'logo_all': 'На все фото',
+        'logo_all': 'Включить лого на всех фото',
         'logo_size': 'Размер',
         'logo_opacity': 'Непрозр.',
         'logo_hint': 'Шаблон сохраняет относительный размер и отступы при смене рамки. Знак не растягивается; положение можно поправить мышью.',

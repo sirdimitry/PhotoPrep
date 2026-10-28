@@ -116,6 +116,7 @@ class MainWindow(QMainWindow):
         self._ai_percent = 0
         self._after_view=False
         self._start_mask_on_load=None
+        self._last_logo_placement=None
         self._export_dialog=None
         self.setWindowTitle("PhotoPrep")
         self.setWindowIcon(QIcon(app_icon_path()))
@@ -520,6 +521,9 @@ class MainWindow(QMainWindow):
         self.logo_library.setMinimumContentsLength(12);self.logo_library.setMaximumWidth(200)
         self.logo_library.activated.connect(self._choose_catalog_logo);row.addWidget(self.logo_library,stretch=1);layout.addLayout(row)
         self._load_logo_catalog()
+        self.logo_empty=QLabel();self.logo_empty.setWordWrap(True);self.logo_empty.setObjectName('SmallHint');layout.addWidget(self.logo_empty)
+        self.logo_details=QWidget();details=QVBoxLayout(self.logo_details);details.setContentsMargins(0,0,0,0);details.setSpacing(8)
+        outer_layout=layout;layout=details
         self.logo_mode=QComboBox();self.logo_mode.currentIndexChanged.connect(self._logo_mode_changed);layout.addWidget(self.logo_mode)
         self.logo_name=PhotoNameLabel();self.logo_name.setObjectName('SmallHint');layout.addWidget(self.logo_name)
         for key,low,high in (('size',1,94),('opacity',0,100)):
@@ -536,7 +540,10 @@ class MainWindow(QMainWindow):
             button.clicked.connect(lambda checked=False,a=x,b=y:self._logo_position(a,b));row.addWidget(button);self.logo_positions.append((button,key))
         row.addStretch(1);layout.addLayout(row)
         row=QHBoxLayout();self.logo_enabled=QCheckBox();self.logo_enabled.toggled.connect(lambda checked:self._logo_adjust('enabled',checked));row.addWidget(self.logo_enabled)
-        self.logo_all=QPushButton();self.logo_all.setProperty('compact',True);self.logo_all.setFixedHeight(28);self.logo_all.clicked.connect(self._logo_apply_all);row.addWidget(self.logo_all);layout.addLayout(row)
+        layout.addLayout(row)
+        outer_layout.addWidget(self.logo_details)
+        self.logo_all=QPushButton();self.logo_all.setProperty('compact',True);self.logo_all.setFixedHeight(28);self.logo_all.clicked.connect(self._logo_apply_all);outer_layout.addWidget(self.logo_all)
+        layout=outer_layout
         self.logo_hint=QLabel();self.logo_hint.setWordWrap(True);self.logo_hint.setObjectName('SmallHint');layout.addWidget(self.logo_hint)
         return panel
 
@@ -601,7 +608,9 @@ class MainWindow(QMainWindow):
         edits=replace(self.workspace.edits.get(self.workspace.selected,PhotoEdits()),logo=logo)
         if self.workspace.set_edits(self.workspace.selected,edits):
             self.canvas.set_edits(edits);self._update_title()
-        if logo:self._show_preview(True)
+        if logo:
+            self._last_logo_placement=logo
+            self._show_preview(True)
         self._refresh_controls()
 
     def _logo_adjust(self,field,value):
@@ -614,14 +623,37 @@ class MainWindow(QMainWindow):
         logo=self.workspace.edits.get(self.workspace.selected,PhotoEdits()).logo
         if logo:self._set_logo(replace(logo,x=x,y=y))
 
+    def _logo_for_collection(self):
+        return self.workspace.edits.get(self.workspace.selected,PhotoEdits()).logo or self._last_logo_placement
+
     def _logo_apply_all(self):
+        if not self.canvas.has_photo or self.ai.busy:return
         self._capture_view()
-        logo=self.workspace.edits.get(self.workspace.selected,PhotoEdits()).logo
-        if logo and self.workspace.set_logo_for_all(logo):
-            self._update_title();self._refresh_controls()
+        logo=self._logo_for_collection()
+        try:
+            if logo is None:
+                if not self.settings.logo_path:return
+                logo=placement_from_path(self.settings.logo_path)
+            read_logo(logo.path,logo.mode)
+        except (OSError,ValueError):
+            QMessageBox.warning(self,'PhotoPrep',self.t('logo_invalid'));return
+        logo=replace(logo,enabled=True,opacity=logo.opacity if logo.opacity>0 else 1.)
+        self.workspace.set_logo_for_all(logo)
+        self._last_logo_placement=logo
+        self.canvas.set_edits(self.workspace.edits[self.workspace.selected])
+        self._show_preview(True)
+        self._update_title();self._refresh_controls()
 
     def _refresh_logo_controls(self,enabled):
         logo=self.workspace.edits.get(self.workspace.selected,PhotoEdits()).logo
+        if logo:self._last_logo_placement=logo
+        self.logo_details.setVisible(logo is not None)
+        self.logo_empty.setVisible(logo is None)
+        self.logo_empty.setText(self.t('logo_not_applied'))
+        self.logo_hint.setVisible(logo is not None)
+        self.logo_library.blockSignals(True)
+        self.logo_library.setCurrentIndex(max(0,self.logo_library.findData(logo.path)) if logo else 0)
+        self.logo_library.blockSignals(False)
         self.logo_folder.setEnabled(not self.ai.busy)
         self.logo_library.setEnabled(enabled and self.logo_library.count()>1)
         self.logo_mode.blockSignals(True)
@@ -630,7 +662,9 @@ class MainWindow(QMainWindow):
         self.logo_choose.setEnabled(enabled)
         self.logo_last.setEnabled(enabled and bool(self.settings.logo_path) and Path(self.settings.logo_path).is_file())
         self.logo_remove.setEnabled(enabled and logo is not None)
-        self.logo_all.setEnabled(enabled and logo is not None)
+        candidate=self._logo_for_collection()
+        candidate_path=candidate.path if candidate else self.settings.logo_path
+        self.logo_all.setEnabled(enabled and bool(candidate_path) and Path(candidate_path).is_file())
         self.logo_enabled.blockSignals(True);self.logo_enabled.setChecked(bool(logo and logo.enabled));self.logo_enabled.setEnabled(enabled and logo is not None);self.logo_enabled.blockSignals(False)
         self.logo_name.set_filename(Path(logo.path).name if logo else self.t('logo_none'))
         self.logo_name.setToolTip(logo.path if logo else '')

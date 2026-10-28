@@ -49,10 +49,12 @@ class ExportDialog(QDialog):
         row=QHBoxLayout();self.range_group=QButtonGroup(self)
         self.current=QRadioButton(self.t('export_current'))
         self.all=QRadioButton(self.t('export_all',count=len(workspace.photos)))
-        self.current.setChecked(True)
         for button in (self.current,self.all):
             self.range_group.addButton(button);row.addWidget(button);button.toggled.connect(self.validate)
+        self.all.setChecked(len(workspace.photos)>1)
+        self.current.setChecked(len(workspace.photos)<=1)
         root.addLayout(row)
+        root.addWidget(QLabel(self.t('export_common_format')))
         row=QHBoxLayout();self.format_group=QButtonGroup(self);self.formats={}
         for name in ('JPEG','PNG'):
             button=QRadioButton(name);button.setChecked(name==settings.export_format)
@@ -94,6 +96,7 @@ class ExportDialog(QDialog):
         self.quality.setEnabled(jpeg and not self.busy)
         self.quality.setVisible(jpeg);self.quality_label.setVisible(jpeg)
         self.quality_label.setText(self.t('export_quality',quality=self.quality.value()))
+        self.start_button.setText(self.t('export_start_all',count=len(self.selected_photos)) if self.all.isChecked() else self.t('export_start'))
         valid=bool(self.selected_photos)
         message=''
         if self.workspace.output_width*self.workspace.output_height>MAX_PIXELS:message='export_size_large'

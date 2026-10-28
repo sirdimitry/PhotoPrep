@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.1.0-alpha.14 — 2026-10-28
+
+- Synchronize the template selector and detailed logo controls with the current
+  photo. Hide placement controls and clear the selector when no logo is applied.
+- Add explicit Enable logo on all photos, available from an unbranded photo using
+  the last configured placement. Enable the mark throughout the current collection,
+  update the visible canvas immediately and preserve retouch/crop in one undo step.
+- Default multi-photo export to all photos with one shared JPEG/PNG format and an
+  explicit Export all count. Keep current-photo export available.
+
+Validation: 104 tests passed offscreen and with native macOS rendering, both with
+exit status 0. Switching branded/unbranded photos, applying a disabled/custom logo
+from another photo, preserving a retouch preview, undo/redo and actual three-photo
+JPEG/PNG exports with a visible composited mark were verified.
+
 ## v0.1.0-alpha.13 — 2026-10-28
 
 - Use the entire header allocation up to Open photos for the full filename.
