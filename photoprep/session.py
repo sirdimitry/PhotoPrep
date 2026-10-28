@@ -28,10 +28,10 @@ def save_session(path: Path, workspace: Workspace) -> None:
             return os.path.relpath(photo_path, path.parent)
         except ValueError:
             return str(photo_path)
-    if sum(len(stroke.points) for edits in workspace.edits.values() for stroke in edits.strokes) > 200000:
+    if sum(len(stroke.points) for edits in workspace.edits.values() for group in (edits.strokes,*edits.passes) for stroke in group) > 200000 or any(len(edits.passes)>100 for edits in workspace.edits.values()):
         raise SessionError("session_too_large")
     document = {
-        'format': 'PhotoPrep', 'version': 2,
+        'format': 'PhotoPrep', 'version': 3 if any(edits.passes for edits in workspace.edits.values()) else 2,
         'output_size': [workspace.output_width, workspace.output_height],
         'selected': relative(workspace.selected) if workspace.selected else None,
         'photos': [{'path': relative(photo.path),
@@ -106,7 +106,15 @@ def _edits(value) -> PhotoEdits:
                 or crop.x<0 or crop.y<0 or crop.width<=0 or crop.height<=0
                 or crop.x+crop.width>1.000001 or crop.y+crop.height>1.000001):
                 raise ValueError()
-        return PhotoEdits(tuple(strokes),crop)
+        passes_value = value.get('passes',[])
+        if not isinstance(passes_value,list) or len(passes_value)>100:
+            raise ValueError()
+        passes = tuple(_edits({'strokes':group}).strokes for group in passes_value)
+        if any(not group for group in passes):
+            raise ValueError()
+        if count + sum(len(stroke.points) for group in passes for stroke in group)>200000:
+            raise SessionError('session_too_large')
+        return PhotoEdits(tuple(strokes),crop,passes)
     except SessionError:
         raise
     except (TypeError,ValueError,KeyError,OverflowError) as exc:
@@ -125,12 +133,12 @@ def load_session(path: Path) -> tuple[Workspace, int]:
     except (ValueError, UnicodeError, RecursionError) as exc:
         raise SessionError('session_invalid') from exc
     if (not isinstance(document, dict) or document.get('format') != 'PhotoPrep'
-            or type(document.get('version')) is not int or document['version'] not in (1,2)
+            or type(document.get('version')) is not int or document['version'] not in (1,2,3)
             or not isinstance(document.get('photos'), list)):
         raise SessionError('session_invalid')
     if len(document['photos']) > MAX_PHOTOS:
         raise SessionError('session_too_large')
-    output_size = document.get('output_size', [1136,710]) if document['version'] == 2 else [1136,710]
+    output_size = document.get('output_size', [1136,710]) if document['version'] >= 2 else [1136,710]
     if not isinstance(output_size,list) or len(output_size)!=2 or any(type(v) is not int or not 128<=v<=16000 for v in output_size):
         raise SessionError('session_invalid')
     workspace = Workspace(output_width=output_size[0],output_height=output_size[1])
@@ -153,8 +161,8 @@ def load_session(path: Path) -> tuple[Workspace, int]:
         known.add(photo.path)
         workspace.photos.append(photo)
         workspace.views[photo.path] = _view(entry.get('view'))
-        edits = _edits(entry.get('edits')) if document['version']==2 else PhotoEdits()
-        point_count += sum(len(stroke.points) for stroke in edits.strokes)
+        edits = _edits(entry.get('edits')) if document['version']>=2 else PhotoEdits()
+        point_count += sum(len(stroke.points) for group in (edits.strokes,*edits.passes) for stroke in group)
         if point_count > 200000:
             raise SessionError('session_too_large')
         if edits.crop is not None:

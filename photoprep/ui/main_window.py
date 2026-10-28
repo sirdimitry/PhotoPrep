@@ -1,10 +1,11 @@
 """PhotoPrep workspace: read-only photos, sessions, navigation and history.
 
-No image processing or export occurs in this stage. All input image files are read-only.
+Local AI previews run in isolated processes. Original image files stay read-only.
 """
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
 from collections import OrderedDict
 
 from PySide6.QtCore import Qt, QSize
@@ -107,6 +108,7 @@ class MainWindow(QMainWindow):
         self.ai.progress.connect(self._ai_progress)
         self.ai.completed.connect(self._ai_completed)
         self.ai.failed.connect(self._ai_failed)
+        self.ai.cancelled.connect(self._ai_cancelled)
         self._ai_stage = None
         self._ai_percent = 0
         self.setWindowTitle("PhotoPrep")
@@ -402,7 +404,7 @@ class MainWindow(QMainWindow):
         self._capture_view()
         self.canvas.set_tool(tool)
         if tool in ("mask","erase"):
-            self._show_preview(False)
+            self._show_preview(self._current_preview() is not None)
         self.tool_options.setCurrentIndex(1 if tool=="crop" else 0)
         self.tool_options.setVisible(tool!="select")
         self.tool_heading.setText(self.t(tool))
@@ -505,7 +507,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.note)
         return panel
 
-    def _preview_key(self):
+    def _preview_key(self,edits=None):
         path = self.workspace.selected
         if not path:
             return None
@@ -513,8 +515,11 @@ class MainWindow(QMainWindow):
             stat = path.stat()
         except OSError:
             return None
-        strokes = self.workspace.edits.get(path,PhotoEdits()).strokes
-        return path,stat.st_mtime_ns,stat.st_size,strokes
+        edits = edits or self.workspace.edits.get(path,PhotoEdits())
+        return path,stat.st_mtime_ns,stat.st_size,edits.passes
+
+    def _job_key(self):
+        return self._preview_key(),self.workspace.edits.get(self.workspace.selected,PhotoEdits()).strokes
 
     def _current_preview(self):
         return self._previews.get(self._preview_key())
@@ -525,7 +530,7 @@ class MainWindow(QMainWindow):
         image = self._current_preview() if after else None
         if after and image is None:
             return
-        if after and self.canvas.tool in ('mask','erase'):
+        if not after and self._current_preview() is not None and self.canvas.tool in ('mask','erase'):
             self._select_tool('select')
         self.canvas.set_preview(image)
         button = self.after_button if after else self.before_button
@@ -537,20 +542,25 @@ class MainWindow(QMainWindow):
             return
         self._capture_view()
         edits = self.workspace.edits.get(self.workspace.selected,PhotoEdits())
-        if not edits.strokes:
+        if not edits.strokes and (not edits.passes or self._current_preview() is not None):
+            return
+        if edits.strokes and len(edits.passes)>=100:
+            self._ai_failed("ai_pass_limit")
             return
         photo = self.photos[self.workspace.index]
         if photo.width*photo.height>40_000_000:
             self._ai_failed('inference_image_large')
             return
-        mask = render_mask(photo.width,photo.height,edits.strokes)
+        mask = render_mask(photo.width,photo.height,edits.strokes) if edits.strokes else None
         # An erased mask can have strokes but no remaining painted pixels.
-        if mask.constBits().tobytes().count(b'\x00')==mask.sizeInBytes():
+        if mask is not None and mask.constBits().tobytes().count(b'\x00')==mask.sizeInBytes():
             self._ai_failed('empty_mask')
             return
+        self._ai_return_tool = self.canvas.tool
+        base = self._current_preview()
+        self._show_preview(base is not None)
         self._select_tool('select')
-        self._show_preview(False)
-        self.ai.start(photo.path,mask,self._preview_key())
+        self.ai.start(photo.path,mask,self._job_key(),base_image=base,replay=edits.passes if base is None else ())
 
     def _cancel_ai(self):
         self._ai_stage = 'cancelled'
@@ -562,17 +572,34 @@ class MainWindow(QMainWindow):
 
     def _ai_completed(self,key,image):
         self._ai_stage = None
-        if key!=self._preview_key() or not self.canvas.has_photo:
+        if key!=self._job_key() or not self.canvas.has_photo:
             return
+        edits = self.workspace.edits.get(self.workspace.selected,PhotoEdits())
+        if edits.strokes:
+            edits = replace(edits,strokes=(),passes=edits.passes+(edits.strokes,))
+            self.workspace.set_edits(self.workspace.selected,edits)
+            self.canvas.set_edits(edits)
+        key = self._preview_key()
         self._previews[key] = image
         self._previews.move_to_end(key)
         while sum(image.sizeInBytes() for image in self._previews.values())>192*1024*1024:
             self._previews.popitem(last=False)
         self._show_preview(True)
-        self.statusBar().showMessage(self.t('ai_preview_ready'),6000)
+        if getattr(self,'_ai_return_tool','select') in ('mask','erase'):
+            self._select_tool(self._ai_return_tool)
+        self._refresh_controls()
+        self._update_title()
+        self.statusBar().showMessage(self.t('ai_refine_ready',count=len(edits.passes)),6000)
+
+    def _ai_cancelled(self):
+        self._ai_stage = 'cancelled'
+        if getattr(self,'_ai_return_tool','select') in ('mask','erase'):
+            self._select_tool(self._ai_return_tool)
 
     def _ai_failed(self,error):
         self._ai_stage = None
+        if not self.ai.busy and self.canvas.tool=='select' and getattr(self,'_ai_return_tool','select') in ('mask','erase'):
+            self._select_tool(self._ai_return_tool)
         QMessageBox.warning(self,'PhotoPrep',self.t(error))
 
     def _setup_actions(self):
@@ -875,7 +902,8 @@ class MainWindow(QMainWindow):
         edits = self.workspace.edits.get(self.workspace.selected,PhotoEdits())
         preview = self._current_preview() is not None
         self.tools['compare'].setEnabled(enabled and preview)
-        self.process_button.setEnabled(enabled and bool(edits.strokes))
+        self.process_button.setEnabled(enabled and (bool(edits.strokes) or (bool(edits.passes) and not preview)))
+        self.process_button.setText(self.t('ai_restore' if edits.passes and not preview and not edits.strokes else 'process_mask'))
         self.process_button.setToolTip(self.t('ai_download_hint') if not model_path().is_file() else '')
         self.cancel_ai_button.setVisible(self.ai.busy)
         self.before_button.setEnabled(enabled and preview)
@@ -883,7 +911,13 @@ class MainWindow(QMainWindow):
         for widget in (self.thumbnails,self.open_files_button,self.open_folder_button,self.settings_button):
             widget.setEnabled(not self.ai.busy)
         if not self.ai.busy:
-            self.ai_status.setText(self.t('ai_cancelled') if self._ai_stage=='cancelled' else self.t('ai_preview_ready' if preview else 'ai_ready'))
+            if self._ai_stage=='cancelled':
+                status = self.t('ai_cancelled')
+            elif preview:
+                status = self.t('ai_refine_ready',count=len(edits.passes))
+            else:
+                status = self.t('ai_restore_hint' if edits.passes else 'ai_ready')
+            self.ai_status.setText(status)
         self.clear_mask_button.setEnabled(enabled and bool(edits.strokes))
         self.clear_crop_button.setEnabled(enabled and edits.crop is not None)
         self.reset_crop_button.setEnabled(enabled)

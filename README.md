@@ -11,7 +11,7 @@
 ![PhotoPrep — AI cleanup, cropping, branding and batch workflows](assets/github-banner.png)
 
 <p align="center">
-  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.6-FACC15?style=flat-square&labelColor=202227">
+  <img alt="Release" src="https://img.shields.io/badge/version-0.1.0--alpha.7-FACC15?style=flat-square&labelColor=202227">
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-33373d?style=flat-square">
   <img alt="Language" src="https://img.shields.io/badge/UI-English%20%2B%20Русский-33373d?style=flat-square">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-33373d?style=flat-square"></a>
@@ -44,7 +44,7 @@
 
 ### Get it
 
-**[Download v0.1.0-alpha.6 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.6)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
+**[Download v0.1.0-alpha.7 for macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.1.0-alpha.7)** — DMG and SHA256 checksum. Requires **macOS 14+**; Python is bundled. Drag PhotoPrep into Applications.
 
 This early alpha is **ad-hoc signed and not notarized**, so macOS may display a security warning. Verified on macOS 27.2 / Apple Silicon; Intel and other macOS versions have not been tested. See [verified changes](CHANGELOG.md).
 
@@ -78,13 +78,13 @@ Requires **Python 3.11+** and installs **PySide6**. The application does not dow
 | Fit photo in view | `⌘ 0` |
 | Actual pixels (100%) | `⌘ 1` |
 
-Workspace files (`.photoprep.json`) store local image paths and viewing positions, not image copies. Missing sources are reported when reopening; removing a photo from the workspace keeps its original file. Workspace history covers adding/removing photos, mask strokes, crop plans and output dimensions. Originals remain read-only. New workspaces use session format 2; format 1 workspaces still open, while older app versions cannot open format 2.
+Workspace files (`.photoprep.json`) store local image paths and viewing positions, not image copies. Missing sources are reported when reopening; removing a photo from the workspace keeps its original file. Workspace history covers adding/removing photos, mask strokes, removal passes, crop plans and output dimensions. Originals remain read-only. Workspaces with removal passes use session format 3; earlier formats 1/2 remain readable. Alpha.6 and older apps cannot open format 3. Workspaces without removal passes retain format 2.
 
 Tool controls live in the existing inspector, zoom controls sit above the filmstrip, and a shortened photo filename appears beside the app name. Switching tools does not reduce the photo viewport. The output frame stays fixed: drag the photo and scroll to zoom it beneath the frame; output dimensions change only in Settings.
 
-Paint a mask, then choose **Remove selected area** in the inspector. The first run downloads the pinned 208 MB LaMa model from Hugging Face with HTTPS and SHA256 verification. Photos never leave the Mac. Processing runs in a cancellable child process on the CPU; use **Before / After** or the compare icon to switch views. Changing the mask invalidates its old result.
+Paint a mask, then choose **Remove selected area** in the inspector. The first run downloads the pinned 208 MB LaMa model from Hugging Face with HTTPS and SHA256 verification. Photos never leave the Mac. Processing runs in a cancellable child process on the CPU; use **Before / After** or the compare icon to switch views. After each successful pass the current mask clears. Paint over the processed image to remove remaining artifacts; each new pass starts from the previous result. Clear mask affects only the next selection. Undo/redo also covers successful removal passes.
 
-AI results are temporary previews, limited to images up to 40 megapixels. A 512 × 512 context region is inferred and blended only inside the original full-resolution mask; unmasked pixels and alpha remain unchanged. Results depend on the scene and selection. Reopening a workspace requires processing again. Crop frames remain saved plans; image export is not implemented. Settings use two language buttons with immediate dialog translation and padded numeric fields.
+AI results are temporary previews, limited to images up to 40 megapixels. A 512 × 512 context region is inferred and blended only inside the original full-resolution mask; unmasked pixels and alpha remain unchanged. Results depend on the scene and selection. Removal masks are saved in order. After reopening, **Restore retouch** rebuilds the accumulated result; previews evicted from memory can be restored the same way. Up to 100 removal passes are supported per photo. Crop frames remain saved plans; image export is not implemented. Settings use two language buttons with immediate dialog translation and padded numeric fields.
 
 ### Roadmap
 

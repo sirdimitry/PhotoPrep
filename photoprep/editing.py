@@ -30,6 +30,7 @@ class CropRect:
 class PhotoEdits:
     strokes: tuple[MaskStroke, ...] = ()
     crop: CropRect | None = None
+    passes: tuple[tuple[MaskStroke, ...], ...] = ()  # successful passes; strokes is the next mask
 
 
 def fit_crop(width: int, height: int, ratio: float, existing: CropRect | None = None) -> CropRect:

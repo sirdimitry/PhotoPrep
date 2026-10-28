@@ -176,7 +176,7 @@ class EditorCanvas(PhotoCanvas):
         self._preview_active = image is not None
         self._pixmap_item.setPixmap(QPixmap.fromImage(image) if image is not None else self._original_pixmap)
         if self._mask_overlay:
-            self._mask_overlay.setVisible(self.mask_visible and not self._preview_active)
+            self._mask_overlay.setVisible(self.mask_visible and (not self._preview_active or self.tool in ('mask','erase')))
         self.viewport().update()
 
     def set_edits(self, edits):
@@ -184,7 +184,7 @@ class EditorCanvas(PhotoCanvas):
         self._points = None
         if self._mask_overlay:
             self._mask_overlay.rebuild(edits.strokes)
-            self._mask_overlay.setVisible(self.mask_visible and not self._preview_active)
+            self._mask_overlay.setVisible(self.mask_visible and (not self._preview_active or self.tool in ('mask','erase')))
         if self.tool == 'crop' and self.has_photo and not self._applying_image:
             self._enter_crop()
         self.crop_changed.emit()
@@ -268,6 +268,8 @@ class EditorCanvas(PhotoCanvas):
         if tool == 'crop' and self.has_photo and not self._applying_image:
             self._enter_crop()
         self._cursor_point = None
+        if self._mask_overlay:
+            self._mask_overlay.setVisible(self.mask_visible and (not self._preview_active or self.tool in ("mask","erase")))
         self._update_cursor()
         self.viewport().update()
 
@@ -285,7 +287,7 @@ class EditorCanvas(PhotoCanvas):
     def set_mask_visible(self, value):
         self.mask_visible = value
         if self._mask_overlay:
-            self._mask_overlay.setVisible(value and not self._preview_active)
+            self._mask_overlay.setVisible(value and (not self._preview_active or self.tool in ('mask','erase')))
 
     def _commit(self, edits):
         if edits != self.edits and self.current_path:

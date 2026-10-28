@@ -162,7 +162,6 @@ def run_job(request_path):
     if size.isValid() and size.width()*size.height()>40_000_000:
         raise ValueError('inference_image_large')
     source = reader.read()
-    mask = QImage(request['mask'])
     progress('processing')
     options = ort.SessionOptions()
     options.intra_op_num_threads = min(4,os.cpu_count() or 1)
@@ -172,7 +171,20 @@ def run_job(request_path):
     session = ort.InferenceSession(str(model),sess_options=options,providers=['CPUExecutionProvider'])
     def predict(image,mask):
         return session.run(None,{'image':image,'mask':mask})[0]
-    result = inpaint(source,mask,predict)
+    from .editing import MaskStroke, render_mask
+    result = source
+    replay = request.get('replay',[])
+    if not isinstance(replay,list) or len(replay)>100:
+        raise ValueError('inference_image_error')
+    for index,group in enumerate(replay):
+        strokes = tuple(MaskStroke(tuple(tuple(point) for point in item['points']),item['width'],item.get('erase',False)) for item in group)
+        mask = render_mask(result.width(),result.height(),strokes)
+        result = inpaint(result,mask,predict)
+        progress('processing',round((index+1)*100/(len(replay)+bool(request.get('mask')))))
+    if request.get('mask'):
+        result = inpaint(result,QImage(request['mask']),predict)
+    elif not replay:
+        raise ValueError('empty_mask')
     if not result.save(request['output'],'PNG'):
         raise ValueError('inference_output_error')
     progress('complete',100)

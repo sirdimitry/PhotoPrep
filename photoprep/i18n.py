@@ -8,6 +8,11 @@ Language = Literal["en", "ru"]
 
 STRINGS = {
     "en": {
+        'ai_refine_ready': 'Passes: {count}. Paint another mask to refine this result.',
+        'ai_restore': 'Restore retouch',
+        'ai_restore_hint': 'Saved removal passes are ready to restore. Original stays unchanged.',
+        'ai_pass_limit': 'This photo has reached 100 removal passes. Undo a pass before adding another.',
+
         'process_mask': 'Remove selected area',
         'ai_original': 'Before',
         'ai_result': 'After',
@@ -26,7 +31,7 @@ STRINGS = {
         'inference_image_large': 'For now, local processing supports images up to 40 megapixels.',
         'inference_output_error': 'Could not create the preview. Original unchanged.',
         'inference_error': 'Local processing failed. Original unchanged. Try a smaller selected area.',
-        'ai_preview_note': 'AI previews are temporary. Reopening a workspace requires processing again. Export comes later.',
+        'ai_preview_note': 'Removal passes are saved in the workspace. Previews can be restored after reopening. Export comes later.',
         'ai_cancel': 'Cancel',
 
         'fill_crop': 'Fill the fixed frame',
@@ -139,6 +144,11 @@ STRINGS = {
         "photos_empty": "No photos yet",
     },
     "ru": {
+        'ai_refine_ready': 'Удалений: {count}. Дорисуйте маску, чтобы убрать оставшийся артефакт.',
+        'ai_restore': 'Восстановить ретушь',
+        'ai_restore_hint': 'Последовательность удалений сохранена. Восстановите ретушь перед дальнейшей правкой.',
+        'ai_pass_limit': 'Для фото достигнут предел: 100 проходов. Отмените один из проходов, чтобы продолжить.',
+
         'process_mask': 'Удалить выделенное',
         'ai_original': 'До',
         'ai_result': 'После',
@@ -157,7 +167,7 @@ STRINGS = {
         'inference_image_large': 'Пока локальная обработка поддерживает фотографии до 40 мегапикселей.',
         'inference_output_error': 'Не удалось создать предпросмотр. Оригинал сохранён.',
         'inference_error': 'Локальная обработка не удалась. Оригинал сохранён. Попробуйте выделить меньшую область.',
-        'ai_preview_note': 'Предпросмотр временный. После открытия набора обработку нужно повторить. Экспорт появится позднее.',
+        'ai_preview_note': 'Набор сохраняет последовательность удалений. После открытия ретушь можно восстановить. Экспорт появится позднее.',
         'ai_cancel': 'Отмена',
 
         'fill_crop': 'Заполнить неподвижную рамку',

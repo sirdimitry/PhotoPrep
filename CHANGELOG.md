@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.1.0-alpha.7 — 2026-10-28
+
+- Accumulate removal passes: draw on the processed image and apply a new mask to
+  the last result. Keep previous retouch outside the new selection unchanged.
+- Clear only the pending mask after success, return to the brush, and keep the
+  previous result and pending selection after cancellation or failure.
+- Compare the untouched original with the accumulated result. Clear mask affects
+  only the current selection; successful passes participate in undo/redo.
+- Save ordered removal masks in session format 3; restore all passes after
+  reopening or preview-cache eviction. Formats 1/2 remain readable; older apps
+  cannot open format 3. Limit recipes to 100 passes and the existing point budget.
+- Keep staged base images private and clean them with other temporary job files.
+
+Validation: 59 tests passed with native macOS rendering. Real LaMa GUI smoke
+verification completed two accumulated passes, kept every pixel outside each new
+mask identical to the previous result, and restored the saved two-pass recipe
+with exactly matching pixels. Original source hashes stayed unchanged.
+
 ## v0.1.0-alpha.6 — 2026-10-28
 
 Stage 4: initial local LaMa inpainting preview.

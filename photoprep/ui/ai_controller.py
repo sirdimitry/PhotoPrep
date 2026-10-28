@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 import shutil
 import sys
@@ -18,6 +19,7 @@ class AIController(QObject):
     progress = Signal(str,int)
     completed = Signal(object,object)
     failed = Signal(str)
+    cancelled = Signal()
 
     def __init__(self,parent=None):
         super().__init__(parent)
@@ -35,7 +37,7 @@ class AIController(QObject):
     def busy(self):
         return self.process is not None
 
-    def start(self,source,mask,context):
+    def start(self,source,mask,context,*,base_image=None,replay=()):
         if self.busy:
             return
         try:
@@ -43,11 +45,17 @@ class AIController(QObject):
             cache.mkdir(parents=True,exist_ok=True)
             self._directory = Path(tempfile.mkdtemp(prefix='job-',dir=cache))
             self._context = context
-            if not mask.save(str(self._directory/'mask.png'),'PNG'):
+            if mask is not None and not mask.save(str(self._directory/'mask.png'),'PNG'):
                 self._cleanup()
                 self.failed.emit('inference_output_error')
                 return
-            request = {'source':str(source),'model':str(model_path()),'mask':str(self._directory/'mask.png'),
+            if base_image is not None:
+                source = self._directory/'base.png'
+                if not base_image.save(str(source),'PNG'):
+                    raise OSError('Could not stage base preview')
+            request = {'source':str(source),'model':str(model_path()),
+                       'mask':str(self._directory/'mask.png') if mask is not None else None,
+                       'replay':[[asdict(stroke) for stroke in group] for group in replay],
                        'output':str(self._directory/'result.png')}
             path = self._directory/'request.json'
             path.write_text(json.dumps(request))
@@ -111,6 +119,7 @@ class AIController(QObject):
         process.deleteLater()
         if self._cancelled:
             self._cleanup()
+            self.cancelled.emit()
             self.changed.emit()
             return
         if code==0 and status==QProcess.ExitStatus.NormalExit and self._command=='download':

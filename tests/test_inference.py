@@ -120,7 +120,7 @@ def test_cancel_child_process_cleans_temporary_private_files(tmp_path,monkeypatc
     assert source.exists()
 
 
-def test_preview_comparison_invalidation_and_source_integrity(tmp_path,monkeypatch):
+def test_preview_comparison_refinement_and_source_integrity(tmp_path,monkeypatch):
     app=QApplication.instance() or QApplication([])
     app.setQuitOnLastWindowClosed(False)
     prefs=Preferences(QSettings(str(tmp_path/'prefs.ini'),QSettings.Format.IniFormat))
@@ -136,7 +136,7 @@ def test_preview_comparison_invalidation_and_source_integrity(tmp_path,monkeypat
         window.import_paths([str(source)])
         end=time.monotonic()+5
         while window.canvas.loading and time.monotonic()<end:QTest.qWait(10)
-        key=window._preview_key()
+        key=window._job_key()
         processed=original.copy();processed.fill(Qt.GlobalColor.green)
         window._ai_completed(key,processed)
         window._refresh_controls()
@@ -150,13 +150,15 @@ def test_preview_comparison_invalidation_and_source_integrity(tmp_path,monkeypat
         assert window.canvas._preview_active
         assert window.canvas.view_state()==view
         window._select_tool('mask')
-        assert not window.canvas._preview_active and window.before_button.isChecked()
+        assert window.canvas._preview_active and window.after_button.isChecked()
+        assert window.canvas._mask_overlay.isVisible()
         edits=PhotoEdits((MaskStroke(((.5,.5),),.1),))
         window._edits_committed(source.resolve(),edits)
-        assert window._current_preview() is None
-        assert not window.after_button.isEnabled()
+        assert window._current_preview() is not None
+        assert window.after_button.isEnabled()
         window._ai_completed(key,processed)
-        assert not window.canvas._preview_active  # stale completion cannot replace a newer mask
+        assert window.canvas._preview_active  # stale completion cannot replace a newer mask
+        assert window.workspace.edits[source.resolve()]==edits
         assert hashlib.sha256(source.read_bytes()).digest()==digest
         for lang in ('en','ru'):
             prefs.language=lang;window.retranslate()
