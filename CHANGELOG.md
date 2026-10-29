@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.2.0 — 2026-10-29
+
+- Promote the working Python/PySide6 alpha.18 application to v0.2.0.
+- Separate the maintained Python application in `apps/python/` from the future
+  native SwiftUI/Core ML direction in `apps/native/`; prioritize native development
+  in the repository landing pages without claiming a native binary is available.
+- Preserve LaMa, MI-GAN, optional SDXL, Retouch/Crop/Logo/Batch, undo/redo and
+  session formats 1–7. No inference, image-processing or session schema changes.
+- Align package/application versions, bilingual documentation, development guide
+  and CI paths. Add a staged native migration roadmap with acceptance gates.
+- Refuse to overwrite existing build outputs; use fresh build/staging directories
+  and retain them for inspection. Existing tags and release history are preserved.
+
+
+Validation: 129 automated tests passed; real packaged LaMa, MI-GAN and SDXL
+passes, crop/logo JPEG/PNG batch export, lifecycle, signature, mounted DMG,
+checksum, bundled source identity and privacy inspection passed. See the
+[detailed release report](docs/releases/v0.2.0.md) for evidence and limits.
+
 ## v0.1.0-alpha.18 — 2026-10-28
 
 - Replace the removal undo text row with a compact circular reset arrow beside

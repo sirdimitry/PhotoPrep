@@ -13,15 +13,26 @@ ARCH="$($PYTHON -c 'import platform; print(platform.machine())')"
 export PYINSTALLER_CONFIG_DIR="${PYINSTALLER_CONFIG_DIR:-$PWD/work/pyinstaller-cache}"
 
 # Install .[dev] in the active virtual environment before calling this script.
-iconutil -c icns assets/PhotoPrep.iconset -o assets/app-icon.icns
+# Each build gets fresh staging; refuse to replace existing release outputs.
+DMG="PhotoPrep-${VERSION}-macos-${ARCH}.dmg"
+for output in "dist/$DMG" "dist/$DMG.sha256" dist/PhotoPrep.app dist/PhotoPrep; do
+  if [[ -e "$output" || -L "$output" ]]; then
+    echo "Refusing to overwrite existing output: $output" >&2
+    exit 1
+  fi
+done
+mkdir -p work
+BUILD_WORK="$(mktemp -d "$PWD/work/build.XXXXXX")"
+export PHOTOPREP_BUILD_WORK="$BUILD_WORK"
+iconutil -c icns assets/PhotoPrep.iconset -o "$BUILD_WORK/app-icon.icns"
 "$PYTHON" - <<'ASSETS'
 from pathlib import Path
 import shutil
+import os
 from importlib.metadata import distribution
 root = Path.cwd()
-target = root / "work/runtime-assets"
-if target.exists():
-    shutil.rmtree(target)
+build_work = Path(os.environ["PHOTOPREP_BUILD_WORK"])
+target = build_work / "runtime-assets"
 (target / "icons").mkdir(parents=True)
 names = ("files", "folder", "export", "settings", "move", "brush", "eraser",
          "crop", "logo", "compare", "info", "zoom-in", "zoom-out", "close", "chevron", "fit")
@@ -31,12 +42,10 @@ for relative in paths:
     if not source.is_file() or source.is_symlink():
         raise RuntimeError("Missing or symlinked runtime asset: " + str(relative))
     shutil.copyfile(source, target / relative)
-notices = root / 'work/runtime-notices'
-if notices.exists():
-    shutil.rmtree(notices)
+notices = build_work / 'runtime-notices'
 notices.mkdir()
-shutil.copyfile(root/'THIRD_PARTY_NOTICES.md',notices/'README.md')
-shutil.copyfile(root/'LICENSE',notices/'PhotoPrep-LICENSE')
+shutil.copyfile(root.parent.parent/'THIRD_PARTY_NOTICES.md',notices/'README.md')
+shutil.copyfile(root.parent.parent/'LICENSE',notices/'PhotoPrep-LICENSE')
 shutil.copyfile(root/'assets/licenses/MI-GAN-LICENSE',notices/'MI-GAN-LICENSE')
 shutil.copyfile(root/'assets/licenses/SDXL-LICENSE.md',notices/'SDXL-LICENSE.md')
 for name in ('onnxruntime','numpy','protobuf','certifi','pillow','torch','diffusers','transformers','accelerate','safetensors','huggingface-hub','tokenizers','requests','filelock','fsspec','sympy','networkx','psutil','tqdm','pyyaml','regex','importlib-metadata','httpx','httpcore','anyio','jinja2','markupsafe','mpmath','typing-extensions','urllib3','charset-normalizer','idna','h11','hf-xet','zipp'):
@@ -51,7 +60,8 @@ for name in ('onnxruntime','numpy','protobuf','certifi','pillow','torch','diffus
             shutil.copyfile(source,destination)
 ASSETS
 "$PYTHON" -m PyInstaller \
-  --noconfirm --clean --windowed --onedir \
+  --windowed --onedir \
+  --workpath "$BUILD_WORK/pyinstaller" --specpath "$BUILD_WORK/spec" \
   --hidden-import diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl_inpaint \
   --hidden-import transformers.models.clip.modeling_clip \
   --hidden-import transformers.models.clip.tokenization_clip \
@@ -62,11 +72,11 @@ ASSETS
   --hidden-import diffusers.models.unets.unet_2d_condition \
   --copy-metadata diffusers --copy-metadata transformers --copy-metadata torch \
   --copy-metadata accelerate --copy-metadata huggingface-hub --copy-metadata safetensors \
-  --name "PhotoPrep" --icon "assets/app-icon.icns" \
+  --name "PhotoPrep" --icon "$BUILD_WORK/app-icon.icns" \
   --osx-bundle-identifier "com.sirdimitry.PhotoPrep" \
   --target-architecture "$ARCH" \
-  --add-data "work/runtime-assets:assets" \
-  --add-data "work/runtime-notices:third-party" \
+  --add-data "$BUILD_WORK/runtime-assets:assets" \
+  --add-data "$BUILD_WORK/runtime-notices:third-party" \
   launcher.py
 
 "$PYTHON" - <<'PY'
@@ -84,11 +94,11 @@ PY
 codesign --force --deep --sign - "dist/PhotoPrep.app"
 codesign --verify --deep --strict "dist/PhotoPrep.app"
 STAGING="$(mktemp -d "$PWD/work/dmg.XXXXXX")"
-trap 'rm -rf "$STAGING"' EXIT
+# Preserve staging for inspection; no existing files are removed.
 ditto "dist/PhotoPrep.app" "$STAGING/PhotoPrep.app"
 ln -s /Applications "$STAGING/Applications"
 DMG="PhotoPrep-${VERSION}-macos-${ARCH}.dmg"
 hdiutil create -volname "PhotoPrep ${VERSION}" \
-  -srcfolder "$STAGING" -ov -format UDZO "dist/$DMG"
+  -srcfolder "$STAGING" -format UDZO "dist/$DMG"
 (cd dist && shasum -a 256 "$DMG" > "${DMG}.sha256")
 echo "Built: dist/$DMG"

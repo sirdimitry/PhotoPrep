@@ -152,7 +152,7 @@ class PreferencesDialog(QDialog):
         title=QLabel('PhotoPrep '+__version__);title.setObjectName('SectionTitle');layout.addWidget(title)
         self.about_license=QLabel();self.about_license.setWordWrap(True);layout.addWidget(self.about_license)
         self.license_text=QTextBrowser();self.license_text.setOpenExternalLinks(False);self.license_text.setMinimumHeight(110);self.license_text.setMaximumHeight(160)
-        for path in (ROOT/'LICENSE',ROOT/'third-party/PhotoPrep-LICENSE'):
+        for path in (ROOT/'LICENSE',ROOT/'third-party/PhotoPrep-LICENSE',ROOT.parent.parent/'LICENSE'):
             if path.is_file():
                 self.license_text.setPlainText(path.read_text(encoding='utf-8'));break
         layout.addWidget(self.license_text)

@@ -171,7 +171,7 @@ class MainWindow(QMainWindow):
         wordmark.setObjectName("BrandName")
         wordmark.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(wordmark)
-        badge = QLabel("ALPHA 0.1")
+        badge = QLabel(__version__)
         badge.setObjectName("Badge")
         badge.setToolTip(__version__)
         layout.addSpacing(2)
