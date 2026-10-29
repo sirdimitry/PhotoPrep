@@ -44,7 +44,7 @@
 
 **[Скачать v0.2.0 для macOS Apple Silicon](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.2.0)** — DMG и контрольная сумма SHA256. Требуется **macOS 14+**; устанавливать Python отдельно не нужно. Перетащи PhotoPrep в Applications.
 
-Это ранняя альфа с **ad-hoc подписью, без нотарификации Apple**: macOS может показать предупреждение при открытии скачанного приложения. Проверено на macOS 27.2 / Apple Silicon; Intel и другие версии macOS не проверялись. [Список изменений](../../CHANGELOG.md).
+Этот выпуск Python имеет **ad-hoc подпись, без нотарификации Apple**: macOS может показать предупреждение при открытии скачанного приложения. Проверено на macOS 27.2 / Apple Silicon; Intel и другие версии macOS не проверялись. [Список изменений](../../CHANGELOG.md).
 
 Запуск из исходников на macOS с Python 3.11+:
 
