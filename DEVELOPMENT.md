@@ -1,69 +1,92 @@
 # Development
 
-Current version: **0.1.0-alpha.4**, Stage 3 mask/crop workspace.
-The original alpha.1 source commit is retained in Git history.
+Current working Python release: **0.2.0**, based on **0.1.0-alpha.18**.
+The main future development direction is [PhotoPrep Native](apps/native/README.md).
+Native implementation is not part of v0.2.0; follow its [roadmap](apps/native/ROADMAP.md).
 
-## Run and test
+## Layout and identities
 
-Use Python 3.11+ on macOS. The verified release was built on Apple Silicon
-with Python 3.12.4 and PySide6 6.12.0; its minimum macOS version is 14.
+- `apps/native/`: planned SwiftUI/Core ML application and staged acceptance gates.
+- `apps/python/photoprep/`: complete maintained Python/PySide6 application.
+- `apps/python/tests/`, `assets/`, `scripts/`: Python tests, approved artwork and packaging.
+- Root documentation, licence, third-party notices and `.github/`: shared project records.
+- Ignored `.venv/`, `models/`, `work/`, `build/`, `dist/`: local data; never publish them wholesale.
+
+Python keeps `PhotoPrep.app` / `com.sirdimitry.PhotoPrep`. Native must have its own
+app name, identifier, preferences and distribution artifacts. Neither version may
+silently change the other's data. Previous root-level Python commands now run from
+`apps/python`; Git history retains the original paths and releases.
+
+## Run and test Python
+
+Python 3.11+ on macOS. The existing packaging target is Apple Silicon, macOS 14+.
 
 ```bash
+cd apps/python
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements-build.txt
 python -m pip install --no-deps -e .
-python -m pytest -q
+QT_QPA_PLATFORM=offscreen python -m pytest -q
 python -m photoprep
 ```
 
-For tests without a window server, use `QT_QPA_PLATFORM=offscreen python -m pytest -q`.
-Tests use temporary settings and generated pictures; they do not overwrite personal
-preferences or source photographs.
+Tests use temporary settings and generated images. Do not run personal sessions
+as fixtures. An existing compatible environment can be selected via `PYTHON` for
+packaging; run from `apps/python` to import this checkout's source.
 
-## Layout
-
-- `photoprep/`: image metadata, workspace/edit history, mask/crop plans, session storage, preferences and translations.
-- `photoprep/ui/`: window, read-only canvas, settings dialog and theme.
-- `assets/`: approved icon, banner and interface artwork.
-- `tests/`: language, image import, navigation and preference regression checks.
-- `scripts/`: macOS packaging.
-- `work/`, `.venv/`, `build/`, `dist/`: ignored local working files and build outputs.
-
-## Build and verify a DMG
-
-After installing dependencies in the virtual environment:
+## Build and verify the Python DMG
 
 ```bash
 PYTHON="$PWD/.venv/bin/python" bash scripts/build_macos.sh
 open dist/PhotoPrep.app
-hdiutil verify dist/PhotoPrep-0.1.0-alpha.4-macos-arm64.dmg
-cd dist
-shasum -a 256 -c PhotoPrep-0.1.0-alpha.4-macos-arm64.dmg.sha256
+hdiutil verify dist/PhotoPrep-0.2.0-macos-arm64.dmg
+(cd dist && shasum -a 256 -c PhotoPrep-0.2.0-macos-arm64.dmg.sha256)
+codesign --verify --deep --strict dist/PhotoPrep.app
 ```
 
-The script reads the application version and Python architecture, generates an
-ICNS icon, builds a self-contained app, sets bundle metadata, verifies an ad-hoc
-signature, and creates a DMG with an Applications shortcut and a portable SHA256
-file. **The app is not Developer ID signed or notarized.** Gatekeeper may warn
-when opening a downloaded copy. Intel builds and older macOS releases are not
-verified.
+The script refuses to overwrite existing app/DMG/checksum outputs. Fresh build
+and staging directories remain under `work/` for inspection. Preserve previous
+outputs separately before a subsequent build; never clean another person's files.
+It generates icons, bundles dependencies and selected artwork/licences, sets bundle
+versions and creates the DMG plus a portable checksum. The canonical build entry
+point is the script; generated PyInstaller specs are ignored build products.
+The app is **ad-hoc signed, not Developer ID signed or notarized**. Intel and
+older macOS versions require their own verification.
 
-## Release
+## Application and session contract
 
-Use `vMAJOR.MINOR.PATCH[-alpha.N]`. Keep the package, application and README
-versions aligned. Run tests, launch the app, verify the DMG and inspect its app
-before tagging. GitHub Actions runs tests on pushes and can build artifacts on
-manual dispatch. It does not replace the verified local release binary.
+v0.2.0 retains LaMa as default, MI-GAN and optional SDXL; Retouch/Crop/Logo/Batch,
+mask-only RGBA composition, cumulative passes, cancellation, restore and undo/redo.
+Session formats **1–7** remain readable. The writer selects the format required
+by the content, including 7 for SDXL. The release number does not change the schema.
+Session JSON contains private local paths and must not be published. Saves are
+atomic with owner-only permissions; original photos remain read-only.
 
-Publish a GitHub prerelease from the verified tag with the DMG and SHA256 file.
-Both READMEs must link to that release. See `CHANGELOG.md` for verified changes
-and current limits. There are no model downloads, AI inference or image-export operations in Stage 3.
-Mask strokes and normalized crop rectangles are immutable plans over the oriented
-source image. A full-resolution grayscale mask renderer is available for the next AI stage.
+Weights and logos load locally. Downloaded weights use pinned revisions and
+size/SHA256 validation; SDXL inference disables hub networking/telemetry. Templates,
+photos, settings, sessions, logs, credentials and model weights must not enter a
+release. Packaging uses an explicit UI asset list and includes model licences.
 
-Session files contain private local image paths and are ignored by Git. They are saved atomically with owner-only permissions. Packaging copies only an explicit list of UI images; sessions, working files and the repository are not bundled. Photo decoding runs on two background workers; the decoded image cache is bounded at 128 MiB. There is no automatic session upload or persistence.
+## Safe release procedure
 
-Session format 2 adds output dimensions and per-photo mask/crop plans, with finite-number and geometry validation. Format 1 remains readable; older application versions cannot read format 2. Mask overlays use a bounded 1536-pixel preview while strokes retain normalized source coordinates. Undo/redo covers mask, crop and output-size changes in addition to collection changes.
+1. Inspect status, branch, remotes, tags and version sources; record the base SHA.
+   Preserve all existing work. Use an isolated checkout and `release/<version>`.
+2. Align `apps/python/pyproject.toml`, `photoprep/__init__.py`, READMEs and this guide.
+   Add a changelog entry without rewriting historical entries.
+3. Run pytest, build with the existing script, verify signature, Info.plist,
+   DMG and checksum. Smoke-test the packaged app and real model workers; record
+   exactly which backends and flows ran, including any limitations.
+4. Inspect bundled source identity, allowed assets, licences, private paths and
+   credentials; inspect the mounted DMG as well as the build directory.
+5. Commit and push the release branch normally. If review is required, open a PR
+   and wait for approval before merge. Never force push or move existing tags.
+6. Only after successful gates, create a new annotated `v<version>` tag on the
+   verified commit, push that tag and publish its DMG and SHA256. v0.2.0 is a
+   regular Python release. Do not replace assets in existing releases.
+7. Verify the remote tag/commit, release status, asset names/sizes/digest and CI.
+   Keep detailed local validation logs; publish only the intended artifacts.
 
-The output crop frame is drawn in viewport coordinates and cannot be resized or moved by gestures. Image pan/zoom updates the normalized source crop while output dimensions remain constant. Tool options are in the inspector; there are no image/context toolbars above the photo. General navigation view state is restored when leaving crop mode.
+Python CI uses `apps/python` as its working directory and runs on main, release
+branches and tags. Manual dispatch also builds artifacts. A native CI job and
+`native-v<version>` tags will be introduced when that implementation exists.

@@ -31,7 +31,7 @@ inside the full-resolution mask and preserves all pixels outside it.
   *MI-GAN: A Simple Baseline for Image Inpainting on Mobile Devices*, ICCV 2023.
 - Original implementation: https://github.com/Picsart-AI-Research/MI-GAN
 - Weights licence: MIT, copyright 2024 Picsart AI Research (PAIR).
-  Full text: `assets/licenses/MI-GAN-LICENSE` and bundled `third-party/MI-GAN-LICENSE`.
+  Full text: `apps/python/assets/licenses/MI-GAN-LICENSE` and bundled `third-party/MI-GAN-LICENSE`.
 - Author's ONNX export: https://huggingface.co/andraniksargsyan/migan
 - Pinned revision: `406830d0fa60666da0071c342ad2fbc8f30c5c64`
 - File: `migan_pipeline_v2.onnx`, 28,079,181 bytes
@@ -50,6 +50,6 @@ Official model: https://huggingface.co/diffusers/stable-diffusion-xl-1.0-inpaint
 Developed by the Diffusers team, initialized from Stability AI SDXL Base 1.0.
 Weights are downloaded separately as FP16 safetensors from a pinned revision.
 Model licence: CreativeML Open RAIL++-M (not the application's MIT licence).
-Full terms: assets/licenses/SDXL-LICENSE.md, included in the app's third-party notices.
+Full terms: apps/python/assets/licenses/SDXL-LICENSE.md, included in the app's third-party notices.
 PyTorch, Diffusers, Transformers, Accelerate and their dependencies retain their
 own licences, included with the application. No user images are sent to these projects.
