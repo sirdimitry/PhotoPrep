@@ -14,6 +14,11 @@
   and retain them for inspection. Existing tags and release history are preserved.
 
 
+Validation: 129 automated tests passed; real packaged LaMa, MI-GAN and SDXL
+passes, crop/logo JPEG/PNG batch export, lifecycle, signature, mounted DMG,
+checksum, bundled source identity and privacy inspection passed. See the
+[detailed release report](docs/releases/v0.2.0.md) for evidence and limits.
+
 ## v0.1.0-alpha.18 — 2026-10-28
 
 - Replace the removal undo text row with a compact circular reset arrow beside
