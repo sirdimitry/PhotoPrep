@@ -2,7 +2,9 @@
 
 Current working Python release: **0.2.0**, based on **0.1.0-alpha.18**.
 The main future development direction is [PhotoPrep Native](apps/native/README.md).
-Native implementation is not part of v0.2.0; follow its [roadmap](apps/native/ROADMAP.md).
+Native implementation is not part of v0.2.0; its development foundation now lives
+under apps/native. See [build/test commands](apps/native/README.md),
+[verified status and limits](apps/native/STATUS.md), and [roadmap](apps/native/ROADMAP.md).
 
 ## Layout and identities
 

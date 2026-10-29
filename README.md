@@ -11,8 +11,9 @@ Original photos stay unchanged and are never uploaded for processing.
 
 The future macOS application will use **SwiftUI + Core ML**. It has its own
 [application directory](apps/native/README.md) and a detailed
-[migration roadmap](apps/native/ROADMAP.md). Native implementation has not started
-in this repository; no native download is available yet. Python v0.2.0 remains
+[migration roadmap](apps/native/ROADMAP.md). An initial SwiftUI foundation and bounded
+photo preview are implemented; [Core ML retouch is still pending](apps/native/STATUS.md).
+No native download is available yet. Python v0.2.0 remains
 the working application and the behavior reference throughout migration.
 
 ## Available now: PhotoPrep Python v0.2.0
@@ -34,7 +35,7 @@ and [release history](CHANGELOG.md).
 
 | Directory | Purpose | Status |
 | --- | --- | --- |
-| [`apps/native/`](apps/native/README.md) | Primary future SwiftUI/Core ML app | Roadmap only |
+| [`apps/native/`](apps/native/README.md) | Primary SwiftUI/Core ML direction | Development foundation; no retouch engine yet |
 | [`apps/python/`](apps/python/README.md) | Working Python/PySide6 app, tests, assets, packaging | v0.2.0 |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Build, validation and release instructions | Both directions |
 | [CHANGELOG.md](CHANGELOG.md) | Additive release history | Earlier entries preserved |

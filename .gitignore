@@ -15,6 +15,11 @@ work/
 .AppleDouble
 # Builds
 build/
+.build/
+DerivedData/
+xcuserdata/
+*.mlpackage/
+*.mlmodelc/
 dist/
 *.dmg
 *.icns
