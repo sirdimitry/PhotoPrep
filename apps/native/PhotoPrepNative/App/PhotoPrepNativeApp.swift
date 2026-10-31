@@ -1,4 +1,5 @@
 import SwiftUI
+import Darwin
 
 @MainActor enum NativeIdentity {
     static let identifier = "com.sirdimitry.PhotoPrep.Native"
@@ -8,6 +9,27 @@ import SwiftUI
 }
 
 @main
+struct PhotoPrepMain {
+    static func main() {
+        if CommandLine.arguments.contains("--photoprep-worker") {
+            exit(WorkerMain.run(arguments: CommandLine.arguments))
+        }
+        if CommandLine.arguments.contains("--photoprep-e1-selftest") {
+            exit(WorkerMain.selfTest())
+        }
+        if CommandLine.arguments.contains("--photoprep-e1-timeout-selftest") {
+            exit(WorkerMain.timeoutSelfTest())
+        }
+        if CommandLine.arguments.contains("--photoprep-e1-crash-selftest") {
+            exit(WorkerMain.crashSelfTest())
+        }
+        if CommandLine.arguments.contains("--photoprep-e1-cancel-selftest") {
+            exit(WorkerMain.cancelSelfTest())
+        }
+        PhotoPrepNativeApp.main()
+    }
+}
+
 struct PhotoPrepNativeApp: App {
     @StateObject private var workspace = WorkspaceModel()
     @AppStorage("ui/language", store: NativeIdentity.preferences) private var language = "ru"
@@ -77,10 +99,17 @@ private struct WorkspaceView: View {
                 }.padding(.top, 18).frame(minWidth: 180, idealWidth: 230, maxWidth: 310)
                 ZStack {
                     Color(nsColor: .underPageBackgroundColor)
-                    if let preview = model.preview {
-                        Image(decorative: preview.image, scale: 1)
-                            .resizable().scaledToFit().padding(24)
-                            .accessibilityLabel(preview.header.url.lastPathComponent)
+                    if let image = model.displayImage {
+                        BrushCanvas(
+                            image: image,
+                            strokes: model.strokes,
+                            tool: model.tool,
+                            brushWidth: model.brushWidth,
+                            showMask: !model.showingAfter,
+                            onCommit: { model.addStroke($0) }
+                        )
+                        .padding(24)
+                        .accessibilityLabel(model.selected?.lastPathComponent ?? "Photo")
                     } else if !model.busy {
                         ContentUnavailableView {
                             Label(text("Откройте фотографии", "Open your photos"), systemImage: "photo.on.rectangle")
@@ -95,20 +124,8 @@ private struct WorkspaceView: View {
                     }
                     if model.busy { ProgressView().controlSize(.large) }
                 }.frame(minWidth: 400)
-                VStack(alignment: .leading, spacing: 16) {
-                    Label(text("Ретушь", "Retouch"), systemImage: "paintbrush.pointed").font(.headline)
-                    Text(text("Удаление логотипов и восстановление фона",
-                              "Logo removal and background restoration")).font(.subheadline)
-                    Text(text("Движок Core ML ещё не подключён. Сейчас доступен безопасный просмотр фотографий.",
-                              "The Core ML engine is not connected yet. Photo preview is available."))
-                        .font(.callout).foregroundStyle(.secondary)
-                    Divider()
-                    Label(text("Локальная обработка", "Local processing"), systemImage: "lock.shield")
-                    Text(text("Просмотр до 2048 пикселей. При нехватке памяти загрузка останавливается.",
-                              "Preview up to 2048 pixels. Loading stops when memory is low."))
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                }.padding(20).frame(minWidth: 220, idealWidth: 260, maxWidth: 300)
+                RetouchPanel(model: model, language: language)
+                    .frame(minWidth: 220, idealWidth: 260, maxWidth: 300)
             }
             Divider()
             HStack {
