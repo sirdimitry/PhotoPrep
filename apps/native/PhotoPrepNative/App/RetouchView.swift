@@ -7,11 +7,15 @@ struct BrushCanvas: NSViewRepresentable {
     let tool: RetouchTool
     let brushWidth: Double
     let showMask: Bool
+    let viewport: SessionView
+    let panEnabled: Bool
     let onCommit: (MaskStroke) -> Void
+    let onViewChange: (SessionView) -> Void
 
     func makeNSView(context: Context) -> BrushCanvasView {
         let view = BrushCanvasView()
         view.onCommit = onCommit
+        view.onViewChange = onViewChange
         return view
     }
 
@@ -21,7 +25,10 @@ struct BrushCanvas: NSViewRepresentable {
         view.tool = tool
         view.brushWidth = brushWidth
         view.showMask = showMask
+        view.viewport = viewport
+        view.panEnabled = panEnabled
         view.onCommit = onCommit
+        view.onViewChange = onViewChange
         view.needsDisplay = true
     }
 }
@@ -32,23 +39,34 @@ final class BrushCanvasView: NSView {
     var tool: RetouchTool = .brush
     var brushWidth: Double = 0.06
     var showMask = true
+    var viewport = SessionView()
+    var panEnabled = false
     var onCommit: ((MaskStroke) -> Void)?
+    var onViewChange: ((SessionView) -> Void)?
     private var currentStroke: MaskStroke?
+    private var panStart: (point: CGPoint, view: SessionView)?
+    private var spaceDown = false
 
     override var acceptsFirstResponder: Bool { true }
 
+    private var backingScale: CGFloat {
+        max(1, window?.backingScaleFactor ?? 2)
+    }
+
     private var imageRect: CGRect {
         guard let image, image.width > 0, image.height > 0 else { return .zero }
-        let available = bounds.insetBy(dx: 4, dy: 4)
+        let available = bounds.insetBy(dx: 8, dy: 8)
         guard available.width > 0, available.height > 0 else { return .zero }
-        let scale = min(available.width / CGFloat(image.width), available.height / CGFloat(image.height))
-        let size = CGSize(width: CGFloat(image.width) * scale, height: CGFloat(image.height) * scale)
-        return CGRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2, width: size.width, height: size.height)
+        let fit = min(available.width / CGFloat(image.width), available.height / CGFloat(image.height))
+        // 100% is one image pixel per backing pixel, not per point.
+        let actual = viewport.fit ? fit : (1 / backingScale) * CGFloat(max(0.05, viewport.zoom))
+        let size = CGSize(width: CGFloat(image.width) * actual, height: CGFloat(image.height) * actual)
+        let originX = bounds.midX - CGFloat(viewport.centerX) * size.width
+        let originY = bounds.midY - (1 - CGFloat(viewport.centerY)) * size.height
+        return CGRect(x: originX, y: originY, width: size.width, height: size.height)
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.underPageBackgroundColor.setFill()
-        bounds.fill()
         guard let image, image.width > 0, image.height > 0 else { return }
         let rect = imageRect
         guard rect.width > 0, rect.height > 0 else { return }
@@ -66,13 +84,13 @@ final class BrushCanvasView: NSView {
         guard let maskImage = Self.grayImage(mask, width: maskWidth, height: maskHeight) else { return }
         context.saveGState()
         context.clip(to: rect, mask: maskImage)
-        NSColor.systemYellow.withAlphaComponent(0.35).setFill()
+        NSColor.systemYellow.withAlphaComponent(0.28).setFill()
         rect.fill()
         context.restoreGState()
     }
 
     override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .crosshair)
+        addCursorRect(bounds, cursor: (panEnabled || spaceDown) ? .openHand : .crosshair)
     }
 
     private func normalizedPoint(_ event: NSEvent) -> MaskPoint? {
@@ -81,19 +99,38 @@ final class BrushCanvasView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         guard rect.contains(point) else { return nil }
         return MaskPoint(
-            x: Double((point.x - rect.minX) / rect.width),
-            y: Double(1.0 - (point.y - rect.minY) / rect.height)
+            x: min(1, max(0, Double((point.x - rect.minX) / rect.width))),
+            y: min(1, max(0, Double(1.0 - (point.y - rect.minY) / rect.height)))
         )
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard image != nil, let point = normalizedPoint(event) else { return }
         window?.makeFirstResponder(self)
+        let p = convert(event.locationInWindow, from: nil)
+        if panEnabled || spaceDown {
+            panStart = (p, viewport)
+            NSCursor.closedHand.push()
+            return
+        }
+        guard image != nil, let point = normalizedPoint(event) else { return }
         currentStroke = MaskStroke(points: [point], width: brushWidth, erase: tool == .eraser)
         needsDisplay = true
     }
 
     override func mouseDragged(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        if let start = panStart {
+            let rect = imageRect
+            guard rect.width > 0, rect.height > 0 else { return }
+            var next = start.view
+            next.fit = false
+            next.centerX = min(1, max(0, start.view.centerX - Double((p.x - start.point.x) / rect.width)))
+            next.centerY = min(1, max(0, start.view.centerY + Double((p.y - start.point.y) / rect.height)))
+            viewport = next
+            onViewChange?(next)
+            needsDisplay = true
+            return
+        }
         guard var stroke = currentStroke, let point = normalizedPoint(event) else { return }
         if let last = stroke.points.last {
             let dx = point.x - last.x
@@ -110,8 +147,28 @@ final class BrushCanvasView: NSView {
             currentStroke = nil
             needsDisplay = true
         }
+        if panStart != nil {
+            panStart = nil
+            NSCursor.pop()
+            return
+        }
         guard let stroke = currentStroke, !stroke.points.isEmpty else { return }
         onCommit?(stroke)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 49 { spaceDown = true; window?.invalidateCursorRects(for: self); return }
+        super.keyDown(with: event)
+    }
+
+    override func keyUp(with event: NSEvent) {
+        if event.keyCode == 49 { spaceDown = false; window?.invalidateCursorRects(for: self); return }
+        super.keyUp(with: event)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.makeFirstResponder(self)
     }
 
     private static func grayImage(_ bytes: [UInt8], width: Int, height: Int) -> CGImage? {

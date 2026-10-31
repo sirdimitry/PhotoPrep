@@ -97,7 +97,7 @@ struct PhotoPrepNativeApp: App {
         Window("PhotoPrep Native", id: "workspace") {
             V1WorkspaceView(model: workspace, language: language)
                 .preferredColorScheme(appearance == "light" ? .light : .dark)
-                .frame(minWidth: 880, minHeight: 600)
+                .frame(minWidth: 880, minHeight: 560)
                 .onDisappear { workspace.suspend() }
                 .onAppear { workspace.resume() }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
@@ -130,108 +130,6 @@ struct PhotoPrepNativeApp: App {
                     Text(language == "ru" ? "Светлое" : "Light").tag("light")
                 }
             }.padding(24).frame(width: 360)
-        }
-    }
-}
-
-private struct WorkspaceView: View {
-    @ObservedObject var model: WorkspaceModel
-    let language: String
-    private var ru: Bool { language == "ru" }
-    private func text(_ russian: String, _ english: String) -> String { ru ? russian : english }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 24) {
-                Text("PhotoPrep Native").font(.headline)
-                Text(text("Ретушь  →  Кадрирование  →  Логотип  →  Экспорт",
-                          "Retouch  →  Crop  →  Logo  →  Export"))
-                    .font(.callout).foregroundStyle(.secondary)
-                Spacer()
-                Text(text("В разработке", "In development")).font(.caption).foregroundStyle(.secondary)
-            }.padding(18)
-            Divider()
-            HSplitView {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(text("Коллекция", "Collection")).font(.headline).padding(.horizontal)
-                    List(model.photos, selection: $model.selected) { photo in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(photo.url.lastPathComponent).lineLimit(1)
-                            Text("\(photo.width) × \(photo.height)").font(.caption).foregroundStyle(.secondary)
-                        }.padding(.vertical, 4).tag(photo.url)
-                    }.listStyle(.sidebar)
-                }.padding(.top, 18).frame(minWidth: 180, idealWidth: 230, maxWidth: 310)
-                ZStack {
-                    Color(nsColor: .underPageBackgroundColor)
-                    if model.cropMode, let crop = model.crop, let image = model.cropImage {
-                        CropCanvas(image: image, crop: crop, outputAspect: model.outputAspect,
-                                   onChange: { model.setCrop($0) })
-                            .padding(24)
-                    } else if let image = model.displayImage {
-                        BrushCanvas(
-                            image: image,
-                            strokes: model.strokes,
-                            tool: model.tool,
-                            brushWidth: model.brushWidth,
-                            showMask: !model.showingAfter,
-                            onCommit: { model.addStroke($0) }
-                        )
-                        .padding(24)
-                        .accessibilityLabel(model.selected?.lastPathComponent ?? "Photo")
-                    } else if !model.busy {
-                        ContentUnavailableView {
-                            Label(text("Откройте фотографии", "Open your photos"), systemImage: "photo.on.rectangle")
-                        } description: {
-                            Text(text("Оригиналы остаются неизменными. Обработка будет выполняться на вашем Mac.",
-                                      "Originals stay unchanged. Processing will run on your Mac."))
-                        } actions: {
-                            Button(text("Открыть фотографии…", "Open Photos…")) { model.importPhotos() }
-                                .buttonStyle(.borderedProminent).tint(.yellow)
-                                .disabled(model.pressure != .normal)
-                        }
-                    }
-                    if model.busy { ProgressView().controlSize(.large) }
-                }.frame(minWidth: 400)
-                RetouchPanel(model: model, language: language)
-                    .frame(minWidth: 220, idealWidth: 260, maxWidth: 300)
-            }
-            Divider()
-            HStack {
-                if model.busy {
-                    Text(text("Загрузка…", "Loading…"))
-                    Button(text("Отменить", "Cancel")) { model.cancel() }
-                } else {
-                    Text("\(model.photos.count) " + text("фото", model.photos.count == 1 ? "photo" : "photos"))
-                }
-                Spacer()
-                if let issue = model.issue { Text(message(issue)).foregroundStyle(.orange).lineLimit(2) }
-                if let reason = model.sessionReadOnly {
-                    Text(text("Набор только для чтения: \(reason)", "Workspace is read-only: \(reason)"))
-                        .foregroundStyle(.orange).lineLimit(2)
-                }
-            }.font(.caption).padding(12)
-        }
-        .background(WindowCloseGuardView(workspace: model))
-        .toolbar {
-            Button { model.importPhotos() } label: {
-                Label(text("Открыть фотографии", "Open Photos"), systemImage: "plus")
-            }.disabled(model.busy || model.pressure != .normal)
-        }
-    }
-
-    private func message(_ failure: ResourceFailure) -> String {
-        switch failure {
-        case .imageTooLarge, .invalidDimensions:
-            text("Фото превышает предел просмотра: 40 Мп.", "Photo exceeds the 40 MP preview limit.")
-        case .insufficientMemory:
-            text("Недостаточно свободной памяти. Закройте другие задачи и повторите.",
-                 "Not enough available memory. Close other tasks and try again.")
-        case .memoryPressure:
-            text("Загрузка остановлена: системе нужна память. Откройте фото повторно после освобождения памяти.",
-                 "Loading stopped: the system needs memory. Reopen the photo when memory is available.")
-        case .invalidImage:
-            text("Не удалось прочитать фото. Поддерживаются однокадровые JPEG, PNG, TIFF, BMP и WebP.",
-                 "Cannot read photo. Single-frame JPEG, PNG, TIFF, BMP and WebP are supported.")
         }
     }
 }

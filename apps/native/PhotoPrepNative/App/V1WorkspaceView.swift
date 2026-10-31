@@ -27,12 +27,12 @@ private struct V1Checkerboard: View {
                 var x: CGFloat = row % 2 == 0 ? 0 : -cell
                 while x < size.width {
                     context.fill(Path(CGRect(x: x, y: y, width: cell, height: cell)),
-                                 with: .color(Color(white: 0.13)))
+                                 with: .color(Color(white: 0.16)))
                     x += cell * 2
                 }
                 y += cell; row += 1
             }
-        }.background(Color(white: 0.09))
+        }.background(Color(white: 0.12))
     }
 }
 
@@ -104,7 +104,7 @@ private struct V1PhotoThumb: View {
                 Color(white: 0.18).overlay(Image(systemName: "photo").foregroundStyle(.secondary))
             }
         }
-        .frame(width: 92, height: 58).clipped().cornerRadius(4)
+        .frame(width: 74, height: 34).clipped().cornerRadius(4)
         .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color(white: 0.3), lineWidth: 0.5))
         .task(id: photo.url) {
             image = NSImage(contentsOf: photo.url)
@@ -116,7 +116,6 @@ struct V1WorkspaceView: View {
     @ObservedObject var model: WorkspaceModel
     let language: String
     @State private var tool: V1PanelTool = .brush
-    @State private var zoom: CGFloat = 1
     @State private var exportFormat: ExportFormat = .png
     @State private var exportQuality: Double = 0.92
 
@@ -142,10 +141,9 @@ struct V1WorkspaceView: View {
                 Divider().overlay(Color(white: 0.22))
                 rightPanel.frame(width: 296)
             }
-            Divider().overlay(Color(white: 0.22))
-            statusBar
         }
-        .background(Color(white: 0.075))
+        .background(Color(white: 0.16))
+        .tint(.yellow)
         .background(WindowCloseGuardView(workspace: model))
     }
 
@@ -160,6 +158,7 @@ struct V1WorkspaceView: View {
                 .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             Spacer(minLength: 12)
             Button { model.importPhotos() } label: { Label(t("Открыть фото", "Open Photos"), systemImage: "photo") }
+                .buttonStyle(.borderedProminent).tint(.yellow).foregroundStyle(.black)
                 .disabled(model.busy || model.pressure != .normal)
             Button { model.importFolder() } label: { Label(t("Открыть папку", "Open Folder"), systemImage: "folder") }
                 .disabled(model.busy || model.pressure != .normal)
@@ -170,7 +169,7 @@ struct V1WorkspaceView: View {
             SettingsLink { Image(systemName: "gearshape") }.help(t("Настройки оформления", "Appearance settings"))
         }
         .font(.system(size: 12))
-        .padding(.horizontal, 12).frame(height: 48)
+        .padding(.horizontal, 12).frame(height: 44)
     }
 
     private var toolRail: some View {
@@ -188,7 +187,7 @@ struct V1WorkspaceView: View {
             Spacer()
         }
         .padding(.vertical, 10).frame(width: 54)
-        .background(Color(white: 0.095))
+        .background(Color(white: 0.155))
     }
 
     private func rail(_ value: V1PanelTool, _ r: String, _ e: String, action: @escaping () -> Void) -> some View {
@@ -208,51 +207,94 @@ struct V1WorkspaceView: View {
     }
 
     private var canvasArea: some View {
-        ZStack {
-            V1Checkerboard()
-            Group {
-                if model.cropMode, let crop = model.crop, let image = model.cropImage {
-                    CropCanvas(image: image, crop: crop, outputAspect: model.outputAspect,
-                               onChange: { model.setCrop($0) })
-                } else if let image = model.displayImage {
-                    BrushCanvas(image: image, strokes: model.strokes, tool: model.tool,
-                                brushWidth: model.brushWidth, showMask: !model.showingAfter,
-                                onCommit: { model.addStroke($0) })
-                } else if !model.busy {
-                    VStack(spacing: 10) {
-                        Image(systemName: "photo.on.rectangle.angled").font(.system(size: 40)).foregroundStyle(.secondary)
-                        Text(t("Откройте фото или папку", "Open photos or a folder")).font(.headline)
-                        Button(t("Открыть фото…", "Open Photos…")) { model.importPhotos() }
-                            .buttonStyle(.borderedProminent).tint(.yellow).disabled(model.pressure != .normal)
+        GeometryReader { geo in
+            ZStack {
+                V1Checkerboard()
+                Group {
+                    if model.cropMode, let crop = model.crop, let image = model.cropImage {
+                        CropCanvas(image: image, crop: crop, outputAspect: model.outputAspect,
+                                   onChange: { model.setCrop($0) })
+                    } else if let image = model.displayImage {
+                        BrushCanvas(image: image, strokes: model.strokes, tool: model.tool,
+                                    brushWidth: model.brushWidth, showMask: !model.showingAfter,
+                                    viewport: model.canvasView, panEnabled: tool == .move,
+                                    onCommit: { model.addStroke($0) },
+                                    onViewChange: { model.setCanvasView($0) })
+                    } else if !model.busy {
+                        VStack(spacing: 10) {
+                            Image(systemName: "photo.on.rectangle.angled").font(.system(size: 40)).foregroundStyle(.secondary)
+                            Text(t("Откройте фото или папку", "Open photos or a folder")).font(.headline)
+                            Button(t("Открыть фото…", "Open Photos…")) { model.importPhotos() }
+                                .buttonStyle(.borderedProminent).tint(.yellow).disabled(model.pressure != .normal)
+                        }
                     }
                 }
+                if !model.cropMode, let header = current, let selected = model.selected,
+                   let image = model.displayImage {
+                    V1CanvasGuides(imageSize: CGSize(width: header.width, height: header.height),
+                                   imageRect: viewImageRect(size: geo.size, imageSize: CGSize(width: header.width, height: header.height)),
+                                   crop: model.effectiveCrop(for: selected),
+                                   backingScale: displayScale)
+                }
+                if model.busy { ProgressView().controlSize(.large) }
             }
-            .scaleEffect(zoom, anchor: .center)
-            .padding(18)
-            V1Rulers()
-            V1OutputFrame(aspect: CGFloat(model.outputAspect))
-            if model.busy { ProgressView().controlSize(.large) }
         }
         .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
+    }
+
+    @Environment(\.displayScale) private var displayScale
+
+    private func viewImageRect(size: CGSize, imageSize: CGSize) -> CGRect {
+        let available = CGRect(origin: .zero, size: size).insetBy(dx: 8, dy: 8)
+        guard available.width > 0, available.height > 0, imageSize.width > 0, imageSize.height > 0 else { return .zero }
+        let fit = min(available.width / imageSize.width, available.height / imageSize.height)
+        let actual = model.canvasView.fit ? fit : (1 / max(1, displayScale)) * CGFloat(max(0.05, model.canvasView.zoom))
+        let w = imageSize.width * actual, h = imageSize.height * actual
+        return CGRect(x: size.width / 2 - CGFloat(model.canvasView.centerX) * w,
+                      y: size.height / 2 - CGFloat(model.canvasView.centerY) * h,
+                      width: w, height: h)
+    }
+
+    private var zoomPercent: Int {
+        if model.canvasView.fit { return 0 }
+        return Int((model.canvasView.zoom * 100).rounded())
+    }
+    private func setZoom(_ value: Double) {
+        var next = model.canvasView
+        next.fit = false
+        next.zoom = min(8, max(0.1, value))
+        model.setCanvasView(next)
+    }
+    private func zoomStep(_ factor: Double) {
+        guard !model.canvasView.fit else {
+            var next = model.canvasView; next.fit = false; next.zoom = 1; model.setCanvasView(next); return
+        }
+        setZoom(model.canvasView.zoom * factor)
     }
 
     private var filmstrip: some View {
         VStack(spacing: 6) {
             HStack(spacing: 8) {
                 Text(t("Фотографии", "Photos")).font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1).fixedSize()
                 Text("· \(model.photos.count)").font(.system(size: 11)).foregroundStyle(.secondary)
+                    .lineLimit(1).fixedSize()
                 Spacer()
-                Button { zoom = max(0.25, zoom - 0.1) } label: { Image(systemName: "minus.magnifyingglass") }
-                Text("\(Int(zoom * 100))%").font(.system(size: 10)).frame(width: 38)
-                Button { zoom = min(3, zoom + 0.1) } label: { Image(systemName: "plus.magnifyingglass") }
-                Button("100%") { zoom = 1 }.font(.system(size: 10))
-                Button(t("Вписать", "Fit")) { zoom = 1 }.font(.system(size: 10))
+                Button { zoomStep(1 / 1.15) } label: { Image(systemName: "minus.magnifyingglass") }
+                Text(model.canvasView.fit ? "—" : "\(zoomPercent)%").font(.system(size: 10)).frame(width: 38)
+                Button { zoomStep(1.15) } label: { Image(systemName: "plus.magnifyingglass") }
+                Button("100%") { setZoom(1) }.font(.system(size: 10))
+                Button(t("Вписать", "Fit")) {
+                    var next = model.canvasView; next.fit = true; next.zoom = 1; next.centerX = 0.5; next.centerY = 0.5
+                    model.setCanvasView(next)
+                }.font(.system(size: 10))
                 Divider().frame(height: 12)
                 Button { step(-1) } label: { Image(systemName: "chevron.left") }.disabled(model.photos.count < 2)
                 Button { step(1) } label: { Image(systemName: "chevron.right") }.disabled(model.photos.count < 2)
                 Button { model.selected = nil } label: { Image(systemName: "xmark") }.disabled(model.selected == nil)
             }.font(.system(size: 11)).padding(.horizontal, 12)
+            statusBar
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(model.photos) { photo in
@@ -270,9 +312,9 @@ struct V1WorkspaceView: View {
                         }.buttonStyle(.plain)
                     }
                 }.padding(.horizontal, 12)
-            }.frame(height: 84)
+            }.frame(height: 52)
         }
-        .padding(.top, 6).background(Color(white: 0.095))
+        .padding(.top, 4).background(Color(white: 0.155))
     }
 
     private func step(_ delta: Int) {
@@ -300,7 +342,7 @@ struct V1WorkspaceView: View {
             }
             if let error = model.exportError { Text(error).foregroundStyle(.orange).lineLimit(1) }
         }.font(.system(size: 10)).foregroundStyle(.secondary)
-        .padding(.horizontal, 12).frame(height: 24)
+        .padding(.horizontal, 10).frame(height: 20)
     }
 
     private func issueText(_ issue: ResourceFailure) -> String {
@@ -342,7 +384,7 @@ struct V1WorkspaceView: View {
                     exportControls
                 }.padding(14)
             }
-        }.background(Color(white: 0.095))
+        }.background(Color(white: 0.155))
     }
 
     private func section(_ value: String) -> some View {
@@ -477,5 +519,56 @@ struct V1WorkspaceView: View {
                 }
             }
         }
+    }
+}
+
+private struct V1CanvasGuides: View {
+    let imageSize: CGSize
+    let imageRect: CGRect
+    let crop: SessionCrop
+    let backingScale: CGFloat
+
+    var body: some View {
+        Canvas { context, _ in
+            guard imageRect.width > 1, imageRect.height > 1 else { return }
+            let tick = Color(white: 0.45)
+            let label = Color(white: 0.62)
+            // Rulers are in image-pixel coordinates and follow the same transform as the canvas.
+            let step = CGFloat(100)
+            var px: CGFloat = 0
+            while px <= imageSize.width {
+                let x = imageRect.minX + px * imageRect.width / imageSize.width
+                let h: CGFloat = px.truncatingRemainder(dividingBy: 500) == 0 ? 9 : 5
+                context.stroke(Path { p in
+                    p.move(to: CGPoint(x: x, y: imageRect.minY))
+                    p.addLine(to: CGPoint(x: x, y: imageRect.minY - h))
+                }, with: .color(tick), lineWidth: 0.7)
+                if px.truncatingRemainder(dividingBy: 500) == 0 {
+                    context.draw(Text("\(Int(px))").font(.system(size: 8)).foregroundStyle(label),
+                                 at: CGPoint(x: x + 12, y: imageRect.minY - 13))
+                }
+                px += step
+            }
+            var py: CGFloat = 0
+            while py <= imageSize.height {
+                let y = imageRect.minY + py * imageRect.height / imageSize.height
+                let w: CGFloat = py.truncatingRemainder(dividingBy: 500) == 0 ? 9 : 5
+                context.stroke(Path { p in
+                    p.move(to: CGPoint(x: imageRect.minX, y: y))
+                    p.addLine(to: CGPoint(x: imageRect.minX - w, y: y))
+                }, with: .color(tick), lineWidth: 0.7)
+                if py.truncatingRemainder(dividingBy: 500) == 0 {
+                    context.draw(Text("\(Int(py))").font(.system(size: 8)).foregroundStyle(label),
+                                 at: CGPoint(x: imageRect.minX - 24, y: y))
+                }
+                py += step
+            }
+            let frame = CGRect(x: imageRect.minX + CGFloat(crop.x) * imageRect.width,
+                               y: imageRect.minY + CGFloat(crop.y) * imageRect.height,
+                               width: CGFloat(crop.width) * imageRect.width,
+                               height: CGFloat(crop.height) * imageRect.height)
+            context.stroke(Path(frame), with: .color(.yellow), lineWidth: 1.4)
+        }
+        .allowsHitTesting(false)
     }
 }

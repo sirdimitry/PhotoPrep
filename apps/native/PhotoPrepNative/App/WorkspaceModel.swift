@@ -126,6 +126,7 @@ final class WorkspaceModel: ObservableObject {
             retouchError = nil
             showingAfter = false
             if let selected {
+                canvasView = editStates[selected]?.view ?? SessionView()
                 strokes = []
                 Task { @MainActor [weak self] in await self?.validateIdentityAndLoad(selected) }
                 requestPreview()
@@ -163,6 +164,7 @@ final class WorkspaceModel: ObservableObject {
         passCount = state.passes.count
         crop = state.crop
         logo = state.logo
+        canvasView = state.view
         if let current, !state.passes.isEmpty {
             resultImage = pixelCache.get(source: current, passes: state.passes, pass: state.passes.count - 1)
         } else {
@@ -174,6 +176,7 @@ final class WorkspaceModel: ObservableObject {
     }
 
     @Published private(set) var preview: PhotoPreview?
+    @Published private(set) var canvasView = SessionView()
     @Published private(set) var importBusy = false
     @Published private(set) var previewBusy = false
     @Published private(set) var retouchBusy = false
@@ -910,7 +913,7 @@ final class WorkspaceModel: ObservableObject {
         return Double(header.width) / Double(header.height)
     }
 
-    private func fittedCrop(sourceAspect: Double) -> SessionCrop {
+    func fittedCrop(sourceAspect: Double) -> SessionCrop {
         let output = outputAspect
         let w: Double, h: Double
         if sourceAspect > output { w = output / sourceAspect; h = 1 } else { w = 1; h = sourceAspect / output }
@@ -925,6 +928,21 @@ final class WorkspaceModel: ObservableObject {
         let x = min(max(0, value.x), 1 - w)
         let y = min(max(0, value.y), 1 - h)
         return SessionCrop(x: x, y: y, width: w, height: h)
+    }
+
+    func setCanvasView(_ value: SessionView) {
+        canvasView = value
+        guard let selected else { return }
+        var state = editStates[selected] ?? PhotoEditState()
+        state.view = value
+        editStates[selected] = state
+    }
+
+    func effectiveCrop(for url: URL) -> SessionCrop {
+        guard let header = photos.first(where: { $0.url == url }) else {
+            return SessionCrop(x: 0, y: 0, width: 1, height: 1)
+        }
+        return editStates[url]?.crop ?? fittedCrop(sourceAspect: Double(header.width) / Double(header.height))
     }
 
     func beginCrop() {
