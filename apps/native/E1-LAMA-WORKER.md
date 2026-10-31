@@ -13,7 +13,8 @@
 | `9d3f669` | E1 core: straight RGBA, mask, context, composite, tests |
 | `9b9fb9c` | E1 worker + self-test + минимальный canvas/UI |
 | `b848803` | STATUS/README/E1 report |
-| этот отчёт | real-photo/file self-test addendum |
+| `7fd0416` | real-photo file self-test |
+| `141bc73` | real-photo comparison/final diagnostics |
 
 Ветка локальная, не публиковалась; точные хеши — в `git log`.
 
@@ -86,10 +87,10 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 ```bash
 xcodebuild -project apps/native/PhotoPrepNative.xcodeproj -scheme PhotoPrepNative \
   -configuration Debug -destination 'platform=macOS,arch=arm64' \
-  -derivedDataPath /tmp/e1-build build CODE_SIGNING_ALLOWED=NO
+  -derivedDataPath work/e1-build build CODE_SIGNING_ALLOWED=NO
 ```
 
-Сборка успешна. Модель копируется build-phase в `Contents/Resources/Models/LaMa-fp32.mlmodelc`; app ~198 MiB. Для сборки вне текущего checkout задайте `PHOTOPREP_LAMA_MODEL`. Ad-hoc подпись и запуск проверены; Python не требуется.
+Сборка успешна. Готовое приложение: `work/e1-build/Build/Products/Debug/PhotoPrep Native.app` (~199 MiB). Модель копируется build-phase в `Contents/Resources/Models/LaMa-fp32.mlmodelc`. Для сборки вне текущего checkout задайте `PHOTOPREP_LAMA_MODEL`. Ad-hoc подпись и запуск проверены; Python не требуется.
 
 ### 4.3. End-to-end self-test (реальный worker + preprocess + composite)
 
@@ -97,6 +98,7 @@ xcodebuild -project apps/native/PhotoPrepNative.xcodeproj -scheme PhotoPrepNativ
 "PhotoPrep Native.app/Contents/MacOS/PhotoPrep Native" --photoprep-e1-selftest
 PHOTOPREP_E1_WIDTH=4000 PHOTOPREP_E1_HEIGHT=3000 ... --photoprep-e1-selftest
 PHOTOPREP_E1_WIDTH=8000 PHOTOPREP_E1_HEIGHT=5000 ... --photoprep-e1-selftest
+PHOTOPREP_E1_FILE="<app-container>/real-coffee.png" ... --photoprep-e1-file-selftest
 ```
 
 Синтетические источники с градиентом, линиями и alpha; маска из трёх штрихов; полный путь parent → worker → composite:
