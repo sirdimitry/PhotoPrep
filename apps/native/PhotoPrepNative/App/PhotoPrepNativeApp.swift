@@ -66,6 +66,9 @@ struct PhotoPrepMain {
         if CommandLine.arguments.contains("--photoprep-e1-cancel-latency-selftest") {
             exit(WorkerMain.cancelLatencySelfTest())
         }
+        if CommandLine.arguments.contains("--photoprep-session-selftest") {
+            exit(WorkerMain.sessionSelfTest())
+        }
         PhotoPrepNativeApp.main()
     }
 }
@@ -93,6 +96,12 @@ struct PhotoPrepNativeApp: App {
                     .keyboardShortcut("o").disabled(workspace.busy || workspace.pressure != .normal)
                 Button(language == "ru" ? "Новая коллекция" : "New Collection") { workspace.clear() }
                     .keyboardShortcut("n")
+                Divider()
+                Button(language == "ru" ? "Открыть набор…" : "Open Workspace…") { workspace.openSessionPanel() }
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
+                Button(language == "ru" ? "Сохранить набор…" : "Save Workspace…") { workspace.saveSessionPanel() }
+                    .keyboardShortcut("s")
+                    .disabled(workspace.sessionReadOnly != nil || workspace.photos.isEmpty)
             }
         }
         Settings {
@@ -177,6 +186,10 @@ private struct WorkspaceView: View {
                 }
                 Spacer()
                 if let issue = model.issue { Text(message(issue)).foregroundStyle(.orange).lineLimit(2) }
+                if let reason = model.sessionReadOnly {
+                    Text(text("Набор только для чтения: \(reason)", "Workspace is read-only: \(reason)"))
+                        .foregroundStyle(.orange).lineLimit(2)
+                }
             }.font(.caption).padding(12)
         }
         .toolbar {

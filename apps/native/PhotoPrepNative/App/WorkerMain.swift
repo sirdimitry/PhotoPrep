@@ -701,3 +701,41 @@ extension WorkerMain {
         return 0
     }
 }
+
+extension WorkerMain {
+    static func sessionSelfTest() -> Int32 {
+        guard let sourceDir = ProcessInfo.processInfo.environment["PHOTOPREP_SESSION_DIR"],
+              let outDir = ProcessInfo.processInfo.environment["PHOTOPREP_SESSION_OUT"] else {
+            print("session self-test: missing env")
+            return 1
+        }
+        let source = URL(fileURLWithPath: sourceDir, isDirectory: true)
+        let out = URL(fileURLWithPath: outDir, isDirectory: true)
+        try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        var report: [[String: Any]] = []
+        let files = (try? FileManager.default.contentsOfDirectory(at: source, includingPropertiesForKeys: nil)) ?? []
+        for file in files.filter({ $0.pathExtension == "json" }).sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            do {
+                let workspace = try SessionCodec.load(file)
+                let originalHash = (try? SourceIdentity.digest(file)) ?? ""
+                var saved = false
+                if !workspace.readOnly {
+                    try SessionCodec.save(workspace, to: out.appendingPathComponent(file.lastPathComponent))
+                    saved = true
+                }
+                let afterHash = (try? SourceIdentity.digest(file)) ?? ""
+                report.append(["file": file.lastPathComponent, "version": workspace.version,
+                               "readOnly": workspace.readOnly, "reason": workspace.readOnlyReason ?? "",
+                               "photos": workspace.photos.count, "saved": saved,
+                               "originalUnchanged": originalHash == afterHash])
+            } catch {
+                report.append(["file": file.lastPathComponent, "error": String(describing: error)])
+            }
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: out.appendingPathComponent("native-session-report.json"))
+        }
+        print("session self-test: \(report.count) fixtures")
+        return report.allSatisfy { ($0["error"] == nil) } ? 0 : 1
+    }
+}
