@@ -38,7 +38,14 @@ End-to-end diagnostics (signed ad-hoc app; no Python):
 "PhotoPrep Native.app/Contents/MacOS/PhotoPrep Native" --photoprep-e1-timeout-selftest
 "PhotoPrep Native.app/Contents/MacOS/PhotoPrep Native" --photoprep-e1-crash-selftest
 "PhotoPrep Native.app/Contents/MacOS/PhotoPrep Native" --photoprep-e1-cancel-selftest
+PHOTOPREP_E1_FILE="<container>/real-coffee.png" \
+  "PhotoPrep Native.app/Contents/MacOS/PhotoPrep Native" --photoprep-e1-file-selftest
 ```
+
+The file self-test decodes a permitted real photo through the same
+straight-RGBA decoder, runs the worker on three synthetic edge-mask strokes and
+writes `<name>.native.png`; it prints outside/alpha changes. Use files inside the
+app container (or otherwise accessible under App Sandbox), not `/tmp`.
 
 Use `PHOTOPREP_E1_WIDTH` / `PHOTOPREP_E1_HEIGHT` to exercise 1024×768,
 4000×3000 and 8000×5000 synthetic sources.
