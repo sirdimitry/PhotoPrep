@@ -66,6 +66,17 @@ public enum SystemMemory {
         return (UInt64(stats.free_count) + UInt64(stats.inactive_count)) * UInt64(pageSize)
     }
 
+    public static func physicalFootprintBytes() -> UInt64? {
+        var info = task_vm_info()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(22), $0, &count)
+            }
+        }
+        return result == KERN_SUCCESS ? UInt64(info.phys_footprint) : nil
+    }
+
     public static func residentBytes() -> UInt64? {
         var info = mach_task_basic_info()
         var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<integer_t>.size)
