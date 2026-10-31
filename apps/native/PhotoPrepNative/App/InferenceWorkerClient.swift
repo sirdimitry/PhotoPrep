@@ -50,11 +50,11 @@ final class InferenceWorkerClient: @unchecked Sendable {
         let deadline = Date().addingTimeInterval(timeout)
         while process.isRunning {
             if isCancelled || cancellation?.isCancelled == true {
-                terminate(process)
+                terminateAndWait(process)
                 throw WorkerClientFailure.cancelled
             }
             if Date() >= deadline {
-                terminate(process)
+                terminateAndWait(process)
                 throw WorkerClientFailure.timedOut
             }
             Thread.sleep(forTimeInterval: 0.05)
@@ -84,13 +84,11 @@ final class InferenceWorkerClient: @unchecked Sendable {
     }
 
     func cancel() {
+        // The run loop owns the process wait. It observes this flag every 50 ms
+        // and performs the confirmed SIGTERM -> SIGKILL wait before returning.
         lock.lock()
         cancelled = true
-        let process = self.process
         lock.unlock()
-        if let process {
-            terminate(process)
-        }
     }
 
     private var isCancelled: Bool {
@@ -99,14 +97,26 @@ final class InferenceWorkerClient: @unchecked Sendable {
         return cancelled
     }
 
-    private func terminate(_ process: Process) {
+    /// Stop the child and do not return until it is gone and reaped. This is
+    /// what makes job-directory cleanup and the next heavy job safe.
+    private func terminateAndWait(_ process: Process) {
         guard process.isRunning else { return }
-        process.terminate()
         let pid = process.processIdentifier
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
-            if process.isRunning {
-                kill(pid, SIGKILL)
-            }
+        process.terminate()
+        let termDeadline = Date().addingTimeInterval(0.5)
+        while process.isRunning && Date() < termDeadline {
+            Thread.sleep(forTimeInterval: 0.02)
         }
+        if process.isRunning {
+            kill(pid, SIGKILL)
+        }
+        let killDeadline = Date().addingTimeInterval(2.0)
+        while process.isRunning && Date() < killDeadline {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        if process.isRunning {
+            kill(pid, SIGKILL)
+        }
+        process.waitUntilExit()
     }
 }

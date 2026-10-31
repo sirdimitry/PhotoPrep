@@ -36,6 +36,9 @@ enum WorkerMain {
                 throw WorkerFailure.invalidInput
             }
 
+            if ProcessInfo.processInfo.environment["PHOTOPREP_E1_IGNORE_TERM"] == "1" {
+                signal(SIGTERM, SIG_IGN)
+            }
             if ProcessInfo.processInfo.environment["PHOTOPREP_E1_HANG"] == "1" {
                 Thread.sleep(forTimeInterval: 30)
             }
@@ -314,6 +317,40 @@ extension WorkerMain {
         }
     }
 
+    static func hardKillSelfTest() -> Int32 {
+        guard let job = makeDiagnosticJob(), let model = Bundle.main.url(forResource: "LaMa-fp32", withExtension: "mlmodelc", subdirectory: "Models") else {
+            print("hard-kill self-test: setup failed")
+            return 1
+        }
+        defer { try? FileManager.default.removeItem(at: job) }
+        setenv("PHOTOPREP_E1_HANG", "1", 1)
+        setenv("PHOTOPREP_E1_IGNORE_TERM", "1", 1)
+        defer { unsetenv("PHOTOPREP_E1_HANG"); unsetenv("PHOTOPREP_E1_IGNORE_TERM") }
+        let request = WorkerRequest(
+            jobID: UUID().uuidString,
+            modelPath: model.path,
+            imagePath: job.appendingPathComponent("image.f32").path,
+            maskPath: job.appendingPathComponent("mask.f32").path,
+            outputPath: job.appendingPathComponent("output.f32").path
+        )
+        final class Box: @unchecked Sendable { var pid: Int32 = 0 }
+        let box = Box()
+        let start = Date()
+        do {
+            _ = try InferenceWorkerClient().run(request: request, jobDirectory: job, timeout: 0.2, onStart: { box.pid = $0 })
+            print("hard-kill self-test: unexpectedly succeeded")
+            return 1
+        } catch WorkerClientFailure.timedOut {
+            let elapsed = Date().timeIntervalSince(start)
+            let alive = box.pid != 0 && kill(box.pid, 0) == 0
+            print("hard-kill self-test: timed out in \(String(format: "%.2f", elapsed)) s, pid_alive=\(alive)")
+            return !alive && elapsed < 5 ? 0 : 1
+        } catch {
+            print("hard-kill self-test: wrong error \(error)")
+            return 1
+        }
+    }
+
     static func cancelBeforeStartSelfTest() -> Int32 {
         guard let job = makeDiagnosticJob(), let model = Bundle.main.url(forResource: "LaMa-fp32", withExtension: "mlmodelc", subdirectory: "Models") else {
             print("cancel-before-start self-test: setup failed")
@@ -375,11 +412,11 @@ extension WorkerMain {
             outputPath: job.appendingPathComponent("output.f32").path
         )
         let semaphore = DispatchSemaphore(value: 0)
-        final class Box: @unchecked Sendable { var value = "" }
+        final class Box: @unchecked Sendable { var value = ""; var pid: Int32 = 0 }
         let box = Box()
         Task.detached {
             do {
-                _ = try client.run(request: request, jobDirectory: job, timeout: 60)
+                _ = try client.run(request: request, jobDirectory: job, timeout: 60, onStart: { box.pid = $0 })
                 box.value = "succeeded"
             } catch WorkerClientFailure.cancelled {
                 box.value = "cancelled"
@@ -393,6 +430,9 @@ extension WorkerMain {
         _ = semaphore.wait(timeout: .now() + 10)
         print("cancel self-test: \(box.value)")
         guard box.value == "cancelled" else { return 1 }
+        let firstGone = box.pid != 0 && kill(box.pid, 0) != 0
+        print("cancel self-test: first pid gone=\(firstGone)")
+        guard firstGone else { return 1 }
         guard let second = makeDiagnosticJob() else { print("cancel self-test: second setup failed"); return 1 }
         defer { try? FileManager.default.removeItem(at: second) }
         let secondRequest = WorkerRequest(
@@ -402,10 +442,14 @@ extension WorkerMain {
             maskPath: second.appendingPathComponent("mask.f32").path,
             outputPath: second.appendingPathComponent("output.f32").path
         )
+        final class SecondBox: @unchecked Sendable { var pid: Int32 = 0 }
+        let secondBox = SecondBox()
         do {
-            _ = try InferenceWorkerClient().run(request: secondRequest, jobDirectory: second, timeout: 30)
-            print("cancel self-test: restart after cancel ok")
-            return 0
+            _ = try InferenceWorkerClient().run(request: secondRequest, jobDirectory: second, timeout: 30, onStart: { secondBox.pid = $0 })
+            let distinct = secondBox.pid != 0 && secondBox.pid != box.pid
+            let secondGone = secondBox.pid != 0 && kill(secondBox.pid, 0) != 0
+            print("cancel self-test: restart after cancel ok distinct=\(distinct) second_gone=\(secondGone)")
+            return distinct && secondGone ? 0 : 1
         } catch {
             print("cancel self-test: restart failed \(error)")
             return 1
@@ -586,6 +630,74 @@ extension WorkerMain {
             try? FileManager.default.removeItem(at: job)
         }
         print("stress self-test: completed \(iterations), worst phys=\(worst)")
+        return 0
+    }
+}
+
+extension WorkerMain {
+    static func cancelLatencySelfTest() -> Int32 {
+        let width = 6000
+        let height = 4000
+        var pixels = [UInt8](repeating: 120, count: width * height * 4)
+        for index in 0..<(width * height) { pixels[index * 4 + 3] = 255 }
+        let source = StraightImage(width: width, height: height, pixels: pixels)
+        let mask = [UInt8](repeating: 255, count: width * height)
+        final class CancelBox: @unchecked Sendable {
+            let flag = CancellationFlag()
+            var cancelledAt: Date?
+            var phase = ""
+        }
+        func schedule(_ box: CancelBox, after delay: TimeInterval) {
+            DispatchQueue.global().asyncAfter(deadline: .now() + delay) {
+                box.cancelledAt = Date()
+                box.flag.cancel()
+            }
+        }
+        func latency(_ box: CancelBox, since start: Date) -> Double? {
+            guard let cancelledAt = box.cancelledAt else { return nil }
+            return max(0, Date().timeIntervalSince(cancelledAt))
+        }
+        print("cancel-latency source=\(width)x\(height)")
+
+        let contextBox = CancelBox()
+        schedule(contextBox, after: 0.001)
+        let contextStart = Date()
+        _ = RetouchPreprocessor.contextRect(mask: mask, width: width, height: height, isCancelled: { contextBox.flag.isCancelled })
+        if let value = latency(contextBox, since: contextStart) {
+            print(String(format: "cancel-latency context=%.6f s", value))
+        } else {
+            print("cancel-latency context=not reached")
+        }
+        _ = contextStart
+
+        for target in ["scale", "dilate"] {
+            let box = CancelBox()
+            let prepareStart = Date()
+            _ = try? RetouchPreprocessor.prepare(source: source, mask: mask, isCancelled: { box.flag.isCancelled }, phase: { phase in
+                box.phase = phase
+                if phase == target, box.cancelledAt == nil {
+                    schedule(box, after: 0.001)
+                }
+            })
+            if let value = latency(box, since: prepareStart) {
+                print(String(format: "cancel-latency %@=%.6f s phase=%@", target, value, box.phase))
+            } else {
+                print("cancel-latency %@=not reached phase=%@", target, box.phase)
+            }
+        }
+
+        let compositeBox = CancelBox()
+        let rect = ContextRect(x: 0, y: 0, width: width, height: height)
+        let predicted = [Float](repeating: 100, count: 3 * 512 * 512)
+        schedule(compositeBox, after: 0.001)
+        let compositeStart = Date()
+        _ = try? RetouchPreprocessor.composite(source: source, coverage: mask, predicted: predicted, rect: rect,
+                                               isCancelled: { compositeBox.flag.isCancelled })
+        if let value = latency(compositeBox, since: compositeStart) {
+            print(String(format: "cancel-latency composite=%.6f s", value))
+        } else {
+            print("cancel-latency composite=not reached")
+        }
         return 0
     }
 }

@@ -206,13 +206,14 @@ public struct ContextRect: Sendable, Equatable {
 public enum RetouchPreprocessor {
     public static let resolution = 512
 
-    public static func contextRect(mask: [UInt8], width: Int, height: Int) -> ContextRect? {
+    public static func contextRect(mask: [UInt8], width: Int, height: Int, isCancelled: () -> Bool = { false }) -> ContextRect? {
         guard width > 0, height > 0, mask.count == width * height else { return nil }
         var minX = width
         var minY = height
         var maxX = -1
         var maxY = -1
         for y in 0..<height {
+            if isCancelled() { return nil }
             let row = y * width
             for x in 0..<width where mask[row + x] != 0 {
                 if x < minX { minX = x }
@@ -240,27 +241,31 @@ public enum RetouchPreprocessor {
         )
     }
 
-    public static func prepare(source: StraightImage, mask: [UInt8], isCancelled: () -> Bool = { false }) throws -> PreparedInput {
+    public static func prepare(source: StraightImage, mask: [UInt8], isCancelled: () -> Bool = { false }, phase: (String) -> Void = { _ in }) throws -> PreparedInput {
         guard source.width > 0, source.height > 0,
               source.pixels.count == source.width * source.height * 4,
               mask.count == source.width * source.height else {
             throw RetouchFailure.invalidImage
         }
         if isCancelled() { throw RetouchFailure.cancelled }
+        phase("context")
         guard !MaskRenderer.isEmpty(mask),
-              let rect = contextRect(mask: mask, width: source.width, height: source.height) else {
+              let rect = contextRect(mask: mask, width: source.width, height: source.height, isCancelled: isCancelled) else {
+            if isCancelled() { throw RetouchFailure.cancelled }
             throw RetouchFailure.emptyMask
         }
+        phase("scale")
         var image = [Float](repeating: 0, count: 3 * resolution * resolution)
         var mask512 = [Float](repeating: 0, count: resolution * resolution)
         if rect.width <= resolution && rect.height <= resolution {
             // Qt's SmoothTransformation uses the Imlib2 fixed-point upscaler
             // with 8-bit interpolation weights and truncation. Reproduce it
             // exactly for the common 512-context case.
-            qtUpscale(source: source, mask: mask, rect: rect, image: &image, mask512: &mask512)
+            qtUpscale(source: source, mask: mask, rect: rect, image: &image, mask512: &mask512, isCancelled: isCancelled)
             // QImage::scaled on RGBA8888 takes the QPainter path (bilinear),
             // not the Imlib2 upscaler; keep the measured bilinear path for RGB.
             for y in 0..<resolution {
+                if isCancelled() { throw RetouchFailure.cancelled }
                 let sy = (Double(y) + 0.5) * Double(rect.height) / Double(resolution) - 0.5
                 for x in 0..<resolution {
                     let sx = (Double(x) + 0.5) * Double(rect.width) / Double(resolution) - 0.5
@@ -271,8 +276,11 @@ public enum RetouchPreprocessor {
                     }
                 }
             }
+        } else if rect.width > 2 * resolution || rect.height > 2 * resolution {
+            try qtDownscale(source: source, mask: mask, rect: rect, image: &image, mask512: &mask512, isCancelled: isCancelled)
         } else {
             for y in 0..<resolution {
+                if isCancelled() { throw RetouchFailure.cancelled }
                 let sy = (Double(y) + 0.5) * Double(rect.height) / Double(resolution) - 0.5
                 for x in 0..<resolution {
                     let sx = (Double(x) + 0.5) * Double(rect.width) / Double(resolution) - 0.5
@@ -288,8 +296,10 @@ public enum RetouchPreprocessor {
         }
         // A 5x5 inference-only dilation; the final composite uses the exact
         // original coverage, so no extra pixels are changed.
+        phase("dilate")
         var dilated = [Float](repeating: 0, count: resolution * resolution)
         for y in 0..<resolution {
+            if isCancelled() { throw RetouchFailure.cancelled }
             for x in 0..<resolution {
                 var hit: Float = 0
                 for dy in -2...2 where hit == 0 {
@@ -308,6 +318,84 @@ public enum RetouchPreprocessor {
             }
         }
         return PreparedInput(image: image, mask: dilated, rect: rect)
+    }
+
+    private struct QtDownAxis {
+        var points: [Int]
+        var starts: [Int] // lower 16-bit start weight
+        var counts: [Int] // upper 16-bit C
+    }
+
+    private static func qtDownAxis(source: Int, dest: Int) -> QtDownAxis {
+        var points = [Int](repeating: 0, count: dest)
+        var starts = [Int](repeating: 0, count: dest)
+        var counts = [Int](repeating: 1, count: dest)
+        var value = 0
+        let increment = (source << 16) / dest
+        let count = ((dest << 14) + source - 1) / source
+        for index in 0..<dest {
+            points[index] = min(max(0, value >> 16), source - 1)
+            starts[index] = ((0x10000 - (value & 0xffff)) * count) >> 16
+            counts[index] = max(1, count)
+            value += increment
+        }
+        return QtDownAxis(points: points, starts: starts, counts: counts)
+    }
+
+    private static func qtDownscale(source: StraightImage, mask: [UInt8], rect: ContextRect, image: inout [Float], mask512: inout [Float], isCancelled: () -> Bool) throws {
+        let xAxis = qtDownAxis(source: rect.width, dest: resolution)
+        let yAxis = qtDownAxis(source: rect.height, dest: resolution)
+        let stride = source.width
+        for y in 0..<resolution {
+            if isCancelled() { throw RetouchFailure.cancelled }
+            let Cy = yAxis.counts[y]
+            let yap = yAxis.starts[y]
+            for x in 0..<resolution {
+                let Cx = xAxis.counts[x]
+                let xap = xAxis.starts[x]
+                var sums = [Int](repeating: 0, count: 4)
+                for channel in 0..<4 {
+                    var sy = yAxis.points[y]
+                    var r = 0
+                    func sampleRow(_ row: Int) -> Int {
+                        var sx = xAxis.points[x]
+                        func channelValue(_ xx: Int) -> Int {
+                            let offset = (rect.y + row) * stride + rect.x + xx
+                            if channel == 3 { return Int(mask[offset]) }
+                            return Int(source.pixels[offset * 4 + channel])
+                        }
+                        var value = channelValue(sx) * xap
+                        var j = (1 << 14) - xap
+                        while j > Cx {
+                            sx += 1
+                            if sx >= rect.width { sx = rect.width - 1 }
+                            value += channelValue(sx) * Cx
+                            j -= Cx
+                        }
+                        sx += 1
+                        if sx >= rect.width { sx = rect.width - 1 }
+                        value += channelValue(sx) * j
+                        return value >> 4
+                    }
+                    r += sampleRow(sy) * yap
+                    var j = (1 << 14) - yap
+                    while j > Cy {
+                        sy += 1
+                        if sy >= rect.height { sy = rect.height - 1 }
+                        r += sampleRow(sy) * Cy
+                        j -= Cy
+                    }
+                    sy += 1
+                    if sy >= rect.height { sy = rect.height - 1 }
+                    r += sampleRow(sy) * j
+                    sums[channel] = r >> 24
+                }
+                for channel in 0..<3 {
+                    image[channel * resolution * resolution + y * resolution + x] = Float(min(255, max(0, sums[channel]))) / 255.0
+                }
+                mask512[y * resolution + x] = sums[3] > 0 ? 1 : 0
+            }
+        }
     }
 
     private struct QtAxis {
@@ -344,11 +432,14 @@ public enum RetouchPreprocessor {
         return QtAxis(points: points, weights: weights)
     }
 
-    private static func qtUpscale(source: StraightImage, mask: [UInt8], rect: ContextRect, image: inout [Float], mask512: inout [Float]) {
+    private static func qtUpscale(source: StraightImage, mask: [UInt8], rect: ContextRect, image: inout [Float], mask512: inout [Float], isCancelled: () -> Bool) {
         let xAxis = qtAxis(source: rect.width, dest: resolution)
         let yAxis = qtAxis(source: rect.height, dest: resolution)
         let stride = source.width
         for y in 0..<resolution {
+            if isCancelled() {
+                return
+            }
             let yp = rect.y + yAxis.points[y]
             let yw = yAxis.weights[y]
             let nextY = yw > 0 ? yp + 1 : yp

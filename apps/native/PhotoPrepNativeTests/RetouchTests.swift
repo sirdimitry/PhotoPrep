@@ -141,6 +141,8 @@ final class RetouchTests: XCTestCase {
         for y in 8..<16 { for x in 8..<24 { coverage[y * width + x] = 255 } }
         let flag = CancellationFlag()
         flag.cancel()
+        XCTAssertNil(RetouchPreprocessor.contextRect(mask: coverage, width: width, height: height,
+                                                     isCancelled: { flag.isCancelled }))
         XCTAssertThrowsError(try RetouchPreprocessor.prepare(source: source, mask: coverage, isCancelled: { flag.isCancelled })) {
             XCTAssertEqual($0 as? RetouchFailure, .cancelled)
         }

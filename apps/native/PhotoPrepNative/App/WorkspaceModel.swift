@@ -71,7 +71,11 @@ final class WorkspaceModel: ObservableObject {
         source.resume()
         pressureSource = source
         #if DEBUG
-        if let url = DebugLaunchOptions.openPhoto {
+        if CommandLine.arguments.contains("--photoprep-e1-full-stress") {
+            Task { @MainActor [weak self] in await self?.runFullStress() }
+        } else if CommandLine.arguments.contains("--photoprep-e1-pressure-active-selftest") {
+            Task { @MainActor [weak self] in await self?.runActivePressureSelftest() }
+        } else if let url = DebugLaunchOptions.openPhoto {
             NSLog("PhotoPrep debug open: %@", url.path)
             DispatchQueue.main.async { [weak self] in self?.importURLs([url]) }
         }
@@ -84,6 +88,9 @@ final class WorkspaceModel: ObservableObject {
         panel.allowedContentTypes = [.jpeg, .png, .tiff, .bmp, .webP]
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
+        #if DEBUG
+        if let directory = DebugLaunchOptions.panelDirectory { panel.directoryURL = directory }
+        #endif
         panel.begin { [weak self] response in
             guard response == .OK else { return }
             let urls = panel.urls
@@ -272,6 +279,12 @@ final class WorkspaceModel: ObservableObject {
 
         retouchTask = Task { [weak self] in
             guard let self else { return }
+            let timingsStart = Date()
+            var decodeEnd = timingsStart
+            var prepareEnd = timingsStart
+            var workerStart = timingsStart
+            var workerEnd = timingsStart
+            var compositeEnd = timingsStart
             var jobDirectory: URL?
             defer {
                 if let jobDirectory { try? FileManager.default.removeItem(at: jobDirectory) }
@@ -282,6 +295,7 @@ final class WorkspaceModel: ObservableObject {
                 }.value
                 try Task.checkCancellation()
                 let source = try await self.imageDecoder.decode(url: url)
+                decodeEnd = Date()
                 try Task.checkCancellation()
                 let (mask, prepared) = try await Task.detached(priority: .userInitiated) {
                     let mask = MaskRenderer.render(width: source.width, height: source.height, strokes: snapshot, isCancelled: { cancellation.isCancelled })
@@ -289,6 +303,7 @@ final class WorkspaceModel: ObservableObject {
                     guard !MaskRenderer.isEmpty(mask) else { throw RetouchFailure.emptyMask }
                     return (mask, try RetouchPreprocessor.prepare(source: source, mask: mask, isCancelled: { cancellation.isCancelled }))
                 }.value
+                prepareEnd = Date()
                 try Task.checkCancellation()
                 guard let modelURL = self.modelURL else { throw RetouchFailure.modelMissing }
                 let directory = try Self.makeJobDirectory(jobID)
@@ -302,9 +317,11 @@ final class WorkspaceModel: ObservableObject {
                     maskPath: directory.appendingPathComponent("mask.f32").path,
                     outputPath: directory.appendingPathComponent("output.f32").path
                 )
+                workerStart = Date()
                 let response = try await Task.detached(priority: .userInitiated) { [worker] in
                     try worker.run(request: request, jobDirectory: directory, cancellation: cancellation)
                 }.value
+                workerEnd = Date()
                 try Task.checkCancellation()
                 guard let outputPath = response.outputPath else { throw RetouchFailure.invalidOutputShape }
                 let predicted = try Self.readFloats(URL(fileURLWithPath: outputPath), count: 3 * 512 * 512)
@@ -320,6 +337,19 @@ final class WorkspaceModel: ObservableObject {
                         isCancelled: { cancellation.isCancelled }
                     )
                 }.value
+                compositeEnd = Date()
+                #if DEBUG
+                let timing: [String: Double] = [
+                    "decode": decodeEnd.timeIntervalSince(timingsStart),
+                    "prepare": prepareEnd.timeIntervalSince(decodeEnd),
+                    "worker": workerEnd.timeIntervalSince(workerStart),
+                    "composite": compositeEnd.timeIntervalSince(workerEnd),
+                    "total": Date().timeIntervalSince(timingsStart),
+                ]
+                NSLog("E1.2 timing decode=%.2f prepare=%.2f worker=%.2f composite=%.2f total=%.2f",
+                      timing["decode"]!, timing["prepare"]!, timing["worker"]!, timing["composite"]!, timing["total"]!)
+                self.writeDebugJSON(timing, name: "e1.2-last-retouch")
+                #endif
                 guard self.retouchActiveID == jobID else { return }
                 self.retouchActiveID = nil
                 self.retouchCancellation = nil
@@ -447,4 +477,134 @@ final class WorkspaceModel: ObservableObject {
         if error is WorkerClientFailure { return "worker_crashed" }
         return "worker_failed"
     }
+    #if DEBUG
+    private func waitWhileBusy(_ description: String) async {
+        var waited = 0.0
+        while (retouchBusy || importBusy) && waited < 180 {
+            try? await Task.sleep(for: .milliseconds(50))
+            waited += 0.05
+        }
+        if retouchBusy || importBusy {
+            NSLog("PhotoPrep full stress: timeout waiting for %@", description)
+        }
+    }
+
+    private func debugSetMask() {
+        strokes = [
+            MaskStroke(points: [MaskPoint(x: 0.02, y: 0.03), MaskPoint(x: 0.38, y: 0.03)], width: 0.16),
+            MaskStroke(points: [MaskPoint(x: 0.02, y: 0.12), MaskPoint(x: 0.38, y: 0.12)], width: 0.16),
+            MaskStroke(points: [MaskPoint(x: 0.02, y: 0.21), MaskPoint(x: 0.38, y: 0.21)], width: 0.16),
+        ]
+        maskRevision += 1
+        editRevision += 1
+        resultImage = nil
+        showingAfter = false
+    }
+
+    private func writeDebugJSON(_ value: [String: Any], name: String) {
+        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted]) else { return }
+        let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("PhotoPrep Native/\(name).json")
+        try? data.write(to: url)
+        NSLog("PhotoPrep full stress: wrote %@", url.path)
+    }
+
+    func runFullStress() async {
+        guard let url = DebugLaunchOptions.openPhoto else {
+            NSLog("PhotoPrep full stress: missing --photoprep-open")
+            NSApplication.shared.terminate(nil)
+            return
+        }
+        let requested = Int(ProcessInfo.processInfo.environment["PHOTOPREP_E1_FULL_STRESS"] ?? "20") ?? 20
+        importURLs([url])
+        var waited = 0.0
+        while (photos.isEmpty || selected == nil || importBusy) && waited < 60 {
+            try? await Task.sleep(for: .milliseconds(100))
+            waited += 0.1
+        }
+        guard selected != nil else {
+            NSLog("PhotoPrep full stress: import failed")
+            NSApplication.shared.terminate(nil)
+            return
+        }
+        while previewBusy && waited < 60 {
+            try? await Task.sleep(for: .milliseconds(100))
+            waited += 0.1
+        }
+        debugSetMask()
+        var samples: [[String: Any]] = []
+        var peak = SystemMemory.physicalFootprintBytes() ?? 0
+        let overallStart = Date()
+        for index in 1...max(1, requested) {
+            debugSetMask()
+            let start = Date()
+            processMask()
+            await waitWhileBusy("iteration \(index)")
+            let elapsed = Date().timeIntervalSince(start)
+            let phys = SystemMemory.physicalFootprintBytes() ?? 0
+            peak = max(peak, phys)
+            let ok = resultImage != nil && retouchError == nil
+            if let image = resultImage?.cgImage() {
+                _ = image.width
+            }
+            showingAfter = true
+            // Force SwiftUI to render the result before the next iteration.
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(80))
+            let sample: [String: Any] = ["iteration": index, "ok": ok, "seconds": elapsed,
+                                         "phys": phys, "width": resultImage?.width ?? 0,
+                                         "height": resultImage?.height ?? 0]
+            samples.append(sample)
+            NSLog("PhotoPrep full stress: \(index)/\(requested) ok=\(ok ? "yes" : "no") seconds=\(String(format: "%.2f", elapsed)) phys=\(phys)")
+        }
+        let residual = SystemMemory.physicalFootprintBytes() ?? 0
+        let report: [String: Any] = [
+            "iterations": requested, "ok": samples.allSatisfy { ($0["ok"] as? Bool) == true },
+            "peakPhys": peak, "residualPhys": residual,
+            "totalSeconds": Date().timeIntervalSince(overallStart), "samples": samples,
+            "source": url.path, "pressure": "\(pressure)"
+        ]
+        writeDebugJSON(report, name: "e1.2-full-stress")
+        NSApplication.shared.terminate(nil)
+    }
+
+    func runActivePressureSelftest() async {
+        guard let url = DebugLaunchOptions.openPhoto else {
+            NSLog("PhotoPrep pressure active: missing --photoprep-open")
+            NSApplication.shared.terminate(nil)
+            return
+        }
+        importURLs([url])
+        var waited = 0.0
+        while (photos.isEmpty || selected == nil || importBusy) && waited < 60 {
+            try? await Task.sleep(for: .milliseconds(100))
+            waited += 0.1
+        }
+        guard selected != nil else { NSApplication.shared.terminate(nil); return }
+        debugSetMask()
+        processMask()
+        waited = 0
+        let targetPhase = ProcessInfo.processInfo.environment["PHOTOPREP_E1_PRESSURE_PHASE"] ?? "processing"
+        while retouchPhase != targetPhase && retouchBusy && waited < 60 {
+            try? await Task.sleep(for: .milliseconds(20))
+            waited += 0.02
+        }
+        let phaseAtInject = retouchPhase
+        let level = ProcessInfo.processInfo.environment["PHOTOPREP_E1_PRESSURE_LEVEL"] ?? "warning"
+        let injected: MemoryPressure = level == "critical" ? .critical : .warning
+        memoryPressure(injected)
+        waited = 0
+        while retouchBusy && waited < 30 {
+            try? await Task.sleep(for: .milliseconds(20))
+            waited += 0.02
+        }
+        let noResult = resultImage == nil
+        let idle = !retouchBusy
+        let report: [String: Any] = ["phaseAtInject": phaseAtInject, "noResult": noResult,
+                                     "idle": idle, "pressure": "\(pressure)", "target": targetPhase, "level": level]
+        writeDebugJSON(report, name: "e1.2-pressure-active")
+        NSLog("PhotoPrep pressure active: phase=%@ noResult=%@ idle=%@", phaseAtInject, noResult ? "yes" : "no", idle ? "yes" : "no")
+        NSApplication.shared.terminate(nil)
+    }
+    #endif
 }

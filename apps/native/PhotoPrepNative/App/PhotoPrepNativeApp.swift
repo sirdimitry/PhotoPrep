@@ -15,6 +15,12 @@ enum DebugLaunchOptions {
               CommandLine.arguments.indices.contains(index + 1) else { return nil }
         return URL(fileURLWithPath: CommandLine.arguments[index + 1])
     }
+
+    static var panelDirectory: URL? {
+        guard let index = CommandLine.arguments.firstIndex(of: "--photoprep-panel-dir"),
+              CommandLine.arguments.indices.contains(index + 1) else { return nil }
+        return URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true)
+    }
 }
 #endif
 
@@ -39,6 +45,9 @@ struct PhotoPrepMain {
         if CommandLine.arguments.contains("--photoprep-e1-hang-selftest") {
             exit(WorkerMain.hangSelfTest())
         }
+        if CommandLine.arguments.contains("--photoprep-e1-hard-kill-selftest") {
+            exit(WorkerMain.hardKillSelfTest())
+        }
         if CommandLine.arguments.contains("--photoprep-e1-cancel-before-start-selftest") {
             exit(WorkerMain.cancelBeforeStartSelfTest())
         }
@@ -53,6 +62,9 @@ struct PhotoPrepMain {
         }
         if CommandLine.arguments.contains("--photoprep-e1-stress-selftest") {
             exit(WorkerMain.stressSelfTest())
+        }
+        if CommandLine.arguments.contains("--photoprep-e1-cancel-latency-selftest") {
+            exit(WorkerMain.cancelLatencySelfTest())
         }
         PhotoPrepNativeApp.main()
     }
