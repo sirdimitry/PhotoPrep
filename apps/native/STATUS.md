@@ -1,9 +1,9 @@
 # PhotoPrep Native — текущий статус
 
-31.10.2026, branch `e1.1/quality-stability`, base E1 `765e57a` (E0 `101f6bf`).
+31.10.2026, branch `e1.2/acceptance`, base E1.1 `55a5188` (E0 `101f6bf`).
 Исторические отчёты не переписаны: [E0-LAMA-COREML.md](E0-LAMA-COREML.md),
 [E1-LAMA-WORKER.md](E1-LAMA-WORKER.md), [E1.1-QUALITY-STABILITY.md](E1.1-QUALITY-STABILITY.md),
-[REFERENCE-RESULTS.md](REFERENCE-RESULTS.md).
+[E1.2-ACCEPTANCE.md](E1.2-ACCEPTANCE.md), [REFERENCE-RESULTS.md](REFERENCE-RESULTS.md).
 
 ## Реально работает
 
@@ -45,11 +45,28 @@
   before/after, cancel; закрытие окна во время 40 Мп обработки не оставило
   процессов/job-файлов. NSOpenPanel, photo switch и 20 UI-проходов — нет.
 
+* **E1.2 завершение worker.** SIGTERM → 0.5 s → SIGKILL → waitUntilExit; job
+  cleanup/next job только после подтверждённого выхода. Hard-kill self-test:
+  0.83 s, pid_alive=false; cancel→restart: старый PID мёртв, новый отличается,
+  процессов нет.
+* **E1.2 отмена в фазах.** context scan, upscale/downscale, prepare, dilation,
+  composite проверяют флаг. Latency 6000×4000: context 36 µs, scale 3.6 ms,
+  dilate 0.28 ms, composite 104 ms.
+* **E1.2 большой контекст.** Qt-совместимый area downscale 1353→512:
+  image/mask max 0, model max 0.00206, final max 1 (0 >1 LSB) на 2 Мп.
+* **E1.2 20 полных app-проходов.** 20/20 ok, 64.02 s, app phys peak 18.29 MB,
+  residual 17.52 MB, без процессов/Jobs.
+* **E1.2 UI.** Реальный NSOpenPanel (debug start dir), 40 Мп pass 16.56 s
+  (decode 4.90, prepare 7.31, worker 2.19, composite 2.15), photo switch,
+  source-change error, cancel/close clean.
+* **E1.2 pressure.** warning/critical во время preparing и processing: noResult,
+  idle, worker/Jobs cleanup; model-level injection.
+
 ## Проверено
 
 * 16 Swift tests: preview, policy, CMYK reject, hidden RGB/alpha, mask
-  top-left/eraser, context rect, outside/alpha composite, cancellation,
-  EXIF 6 full decode, source identity.
+  top-left/eraser, context rect/dilation cancellation, outside/alpha composite,
+  cancellation, EXIF 6 full decode, source identity.
 * Debug app build; ad-hoc signature; model copy; запуск UI.
 * E1.1 self-test 1/12/40 MP: outside=0, alpha=0; app phys after
   20.5 / 121.4 / 373.6 MiB; 40 Мп real-based PNG 8000×5000 — 38.50 s,
@@ -61,23 +78,22 @@
   последовательных запусков app phys стабилен, worker-процессов нет.
 * E0 strict re-verification: 8/8, worst tensor max 0.000664, final max 1 LSB.
 
-## Ограничения
+## Ограничения E1.1/E1.2
 
-* Реальные разрешённые sample (NASA astronaut public domain, coffee CC0) с
-  синтетическим знаком прогнаны; outside/alpha точны. На astronaut Native
-  оставил заметный hallucinated-патч в области логотипа (Native vs Python max
-  35, mean 0.086), поэтому качество real-photo ещё не принято. Нет реальных
-  12/40 MP фото и набора кирпич/ткань/волосы/листва.
-* UI: debug-import/brush/eraser/undo/process/before-after/cancel проверены;
-  NSOpenPanel, смена фото, source substitution и 20 UI-проходов не проверены.
-* 12/40 Мп synthetic + 40 Мп real-based file; 40 Мп UI display/close проверены,
-  полный 40 Мп UI-проход до результата — нет.
-  Реальные sample были 512×512/600×400.
-* 20 worker restarts в одном процессе есть; 20–50 UI-обработок в одном app —
+* Реальные sample coffee/astronaut/grass/brick (NASA public domain / CC0)
+  прогнаны с одинаковыми масками; outside/alpha точны. Остались 5 mask-пикселей
+  round-cap, sub-LSB RGB и размытие grass; blind 100/200% приёмка не заявлена.
+* UI: NSOpenPanel (debug start dir), photo switch, source-change, 40 Мп pass,
+  cancel/close проверены; обычная ручная навигация панели и 20 ручных
+  UI-проходов не проверены. 20 полных проходов — программные.
+* 12/40 Мп synthetic + 40 Мп real-based file; полный 40 Мп UI-проход до
+  результата выполнен (16.56 s), 40 Мп файл — upscaled real coffee, не native
+  detail. Реальные sample — 512×512/600×400.
+* 20 полных программных app-проходов есть; 20–50 ручных мышиных UI-проходов
   нет. Memory pressure injection только model-level, не реальный OS event.
   Нет 8/16 GiB, Intel, macOS 14; только Apple M3 Max 36 GiB, macOS 27.2.
-* Нет Native vs Python blind-сравнения на одинаковых реальных масках; E0
-  проверяет модель, но Native resize/composite отличается от Qt.
+* Native vs Python на одинаковых масках выполнен для coffee/astronaut/grass/
+  brick и 2 Мп big-context; blind 100/200% независимая оценка не выполнена.
 * Нет crop/logo/export/session/MI-GAN/SDXL/FP16/quantization.
 * Worker — self-exec Process, не XPC service; sandbox наследуется, crash-домен
   отдельный, но launchd/XPC lifecycle не реализован.
