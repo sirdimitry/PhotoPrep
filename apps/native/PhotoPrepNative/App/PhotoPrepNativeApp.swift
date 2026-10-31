@@ -8,6 +8,16 @@ import Darwin
     static let preferences = UserDefaults.standard
 }
 
+#if DEBUG
+enum DebugLaunchOptions {
+    static var openPhoto: URL? {
+        guard let index = CommandLine.arguments.firstIndex(of: "--photoprep-open"),
+              CommandLine.arguments.indices.contains(index + 1) else { return nil }
+        return URL(fileURLWithPath: CommandLine.arguments[index + 1])
+    }
+}
+#endif
+
 @main
 struct PhotoPrepMain {
     static func main() {
@@ -23,11 +33,26 @@ struct PhotoPrepMain {
         if CommandLine.arguments.contains("--photoprep-e1-crash-selftest") {
             exit(WorkerMain.crashSelfTest())
         }
+        if CommandLine.arguments.contains("--photoprep-e1-failure-selftest") {
+            exit(WorkerMain.failureSelfTest())
+        }
+        if CommandLine.arguments.contains("--photoprep-e1-hang-selftest") {
+            exit(WorkerMain.hangSelfTest())
+        }
+        if CommandLine.arguments.contains("--photoprep-e1-cancel-before-start-selftest") {
+            exit(WorkerMain.cancelBeforeStartSelfTest())
+        }
         if CommandLine.arguments.contains("--photoprep-e1-cancel-selftest") {
             exit(WorkerMain.cancelSelfTest())
         }
         if CommandLine.arguments.contains("--photoprep-e1-file-selftest") {
             exit(WorkerMain.fileSelfTest())
+        }
+        if CommandLine.arguments.contains("--photoprep-e1-pressure-selftest") {
+            exit(WorkerMain.pressureSelfTest())
+        }
+        if CommandLine.arguments.contains("--photoprep-e1-stress-selftest") {
+            exit(WorkerMain.stressSelfTest())
         }
         PhotoPrepNativeApp.main()
     }

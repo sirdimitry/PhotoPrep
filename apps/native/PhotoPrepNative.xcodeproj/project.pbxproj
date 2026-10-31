@@ -35,6 +35,7 @@ C66666666666666666666666 = { isa = PBXShellScriptBuildPhase; buildActionMask = 2
         CODE_SIGN_STYLE = Manual; CODE_SIGN_IDENTITY = "-";
         CODE_SIGN_ENTITLEMENTS = PhotoPrepNative/PhotoPrepNative.entitlements;
         ENABLE_APP_SANDBOX = YES; ENABLE_HARDENED_RUNTIME = YES; ENABLE_USER_SCRIPT_SANDBOXING = NO;
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
         SWIFT_OPTIMIZATION_LEVEL = "-Onone"; COMBINE_HIDPI_IMAGES = YES;
         SWIFT_EMIT_LOC_STRINGS = NO; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
     }; };

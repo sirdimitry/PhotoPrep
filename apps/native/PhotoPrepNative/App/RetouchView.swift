@@ -212,6 +212,7 @@ struct RetouchPanel: View {
         case "source_changed": return text("Исходный файл изменился. Результат не применён.", "The source changed. The result was not applied.")
         case "model_missing": return text("Модель LaMa не найдена в приложении.", "The LaMa model is missing from the app.")
         case "unsupported_alpha": return text("Формат alpha не позволяет сохранить hidden RGB.", "This alpha layout cannot preserve hidden RGB.")
+        case "unsupported_color": return text("Неподдерживаемая цветовая модель (нужен RGB).", "Unsupported color model (RGB required).")
         case "memory", "insufficient_memory": return text("Недостаточно памяти для этого фото.", "Not enough memory for this photo.")
         case "timeout": return text("Обработка превысила таймаут; worker остановлен.", "Processing timed out; the worker was stopped.")
         case "worker_crashed", "worker_launch_failed", "worker_failed": return text("Worker завершился с ошибкой. Приложение продолжает работу.", "The worker failed. The app is still running.")

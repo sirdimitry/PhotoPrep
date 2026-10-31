@@ -1,5 +1,6 @@
 import Foundation
 import CoreML
+import Darwin
 import ImageIO
 import UniformTypeIdentifiers
 import CoreGraphics
@@ -35,10 +36,18 @@ enum WorkerMain {
                 throw WorkerFailure.invalidInput
             }
 
+            if ProcessInfo.processInfo.environment["PHOTOPREP_E1_HANG"] == "1" {
+                Thread.sleep(forTimeInterval: 30)
+            }
             let loadStart = Date()
             let configuration = MLModelConfiguration()
             configuration.computeUnits = .cpuAndGPU
-            let model = try MLModel(contentsOf: URL(fileURLWithPath: request.modelPath), configuration: configuration)
+            let model: MLModel
+            do {
+                model = try MLModel(contentsOf: URL(fileURLWithPath: request.modelPath), configuration: configuration)
+            } catch {
+                throw WorkerFailure.modelLoad
+            }
             let loadSeconds = Date().timeIntervalSince(loadStart)
 
             let image = try makeArray(shape: [1, 3, 512, 512], data: imageData)
@@ -101,6 +110,7 @@ enum WorkerMain {
 }
 
 private enum WorkerFailure: String, Error {
+    case modelLoad = "model_load_failed"
     case invalidInput = "invalid_input"
     case invalidOutput = "invalid_output"
     case nonFinite = "non_finite_output"
@@ -227,11 +237,8 @@ extension WorkerMain {
         }
     }
 
-    static func crashSelfTest() -> Int32 {
-        guard let job = makeDiagnosticJob() else {
-            print("crash self-test: setup failed")
-            return 1
-        }
+    static func failureSelfTest() -> Int32 {
+        guard let job = makeDiagnosticJob() else { print("failure self-test: setup failed"); return 1 }
         defer { try? FileManager.default.removeItem(at: job) }
         let request = WorkerRequest(
             jobID: UUID().uuidString,
@@ -242,11 +249,96 @@ extension WorkerMain {
         )
         do {
             _ = try InferenceWorkerClient().run(request: request, jobDirectory: job, timeout: 30)
+            print("failure self-test: unexpectedly succeeded")
+            return 1
+        } catch WorkerClientFailure.workerError(let code) {
+            print("failure self-test: ordinary error \(code)")
+            return code == "model_load_failed" ? 0 : 1
+        } catch {
+            print("failure self-test: wrong error \(error)")
+            return 1
+        }
+    }
+
+    static func crashSelfTest() -> Int32 {
+        guard let job = makeDiagnosticJob(), let model = Bundle.main.url(forResource: "LaMa-fp32", withExtension: "mlmodelc", subdirectory: "Models") else {
+            print("crash self-test: setup failed")
+            return 1
+        }
+        defer { try? FileManager.default.removeItem(at: job) }
+        let request = WorkerRequest(
+            jobID: UUID().uuidString,
+            modelPath: model.path,
+            imagePath: job.appendingPathComponent("image.f32").path,
+            maskPath: job.appendingPathComponent("mask.f32").path,
+            outputPath: job.appendingPathComponent("output.f32").path
+        )
+        do {
+            _ = try InferenceWorkerClient().run(request: request, jobDirectory: job, timeout: 30, onStart: { pid in kill(pid, SIGKILL) })
             print("crash self-test: unexpectedly succeeded")
             return 1
+        } catch WorkerClientFailure.processExited(let status) {
+            print("crash self-test: worker crashed with status \(status)")
+            return status == 9 ? 0 : 1
         } catch {
-            print("crash self-test: app survived worker failure: \(error)")
+            print("crash self-test: wrong error \(error)")
+            return 1
+        }
+    }
+
+    static func hangSelfTest() -> Int32 {
+        guard let job = makeDiagnosticJob(), let model = Bundle.main.url(forResource: "LaMa-fp32", withExtension: "mlmodelc", subdirectory: "Models") else {
+            print("hang self-test: setup failed")
+            return 1
+        }
+        defer { try? FileManager.default.removeItem(at: job) }
+        setenv("PHOTOPREP_E1_HANG", "1", 1)
+        defer { unsetenv("PHOTOPREP_E1_HANG") }
+        let request = WorkerRequest(
+            jobID: UUID().uuidString,
+            modelPath: model.path,
+            imagePath: job.appendingPathComponent("image.f32").path,
+            maskPath: job.appendingPathComponent("mask.f32").path,
+            outputPath: job.appendingPathComponent("output.f32").path
+        )
+        do {
+            _ = try InferenceWorkerClient().run(request: request, jobDirectory: job, timeout: 0.2)
+            print("hang self-test: unexpectedly succeeded")
+            return 1
+        } catch WorkerClientFailure.timedOut {
+            print("hang self-test: timed out and worker stopped")
             return 0
+        } catch {
+            print("hang self-test: wrong error \(error)")
+            return 1
+        }
+    }
+
+    static func cancelBeforeStartSelfTest() -> Int32 {
+        guard let job = makeDiagnosticJob(), let model = Bundle.main.url(forResource: "LaMa-fp32", withExtension: "mlmodelc", subdirectory: "Models") else {
+            print("cancel-before-start self-test: setup failed")
+            return 1
+        }
+        defer { try? FileManager.default.removeItem(at: job) }
+        let flag = CancellationFlag()
+        flag.cancel()
+        let request = WorkerRequest(
+            jobID: UUID().uuidString,
+            modelPath: model.path,
+            imagePath: job.appendingPathComponent("image.f32").path,
+            maskPath: job.appendingPathComponent("mask.f32").path,
+            outputPath: job.appendingPathComponent("output.f32").path
+        )
+        do {
+            _ = try InferenceWorkerClient().run(request: request, jobDirectory: job, timeout: 30, cancellation: flag)
+            print("cancel-before-start self-test: unexpectedly succeeded")
+            return 1
+        } catch WorkerClientFailure.cancelled {
+            print("cancel-before-start self-test: cancelled before launch")
+            return 0
+        } catch {
+            print("cancel-before-start self-test: wrong error \(error)")
+            return 1
         }
     }
 
@@ -300,7 +392,24 @@ extension WorkerMain {
         client.cancel()
         _ = semaphore.wait(timeout: .now() + 10)
         print("cancel self-test: \(box.value)")
-        return box.value == "cancelled" ? 0 : 1
+        guard box.value == "cancelled" else { return 1 }
+        guard let second = makeDiagnosticJob() else { print("cancel self-test: second setup failed"); return 1 }
+        defer { try? FileManager.default.removeItem(at: second) }
+        let secondRequest = WorkerRequest(
+            jobID: UUID().uuidString,
+            modelPath: model.path,
+            imagePath: second.appendingPathComponent("image.f32").path,
+            maskPath: second.appendingPathComponent("mask.f32").path,
+            outputPath: second.appendingPathComponent("output.f32").path
+        )
+        do {
+            _ = try InferenceWorkerClient().run(request: secondRequest, jobDirectory: second, timeout: 30)
+            print("cancel self-test: restart after cancel ok")
+            return 0
+        } catch {
+            print("cancel self-test: restart failed \(error)")
+            return 1
+        }
     }
 }
 
@@ -384,11 +493,99 @@ extension WorkerMain {
                 CGImageDestinationAddImage(destination, cg, nil)
                 _ = CGImageDestinationFinalize(destination)
             }
-            print("file self-test: source=\(width)x\(height) outside=\(outside) alpha=\(alpha) rect=\(prepared.rect.width)x\(prepared.rect.height) output=\(outputURL.path) load=\(response.loadSeconds ?? 0) predict=\(response.predictSeconds ?? 0)")
+            if let dumpPath = ProcessInfo.processInfo.environment["PHOTOPREP_E1_DUMP"], !dumpPath.isEmpty {
+                let dump = URL(fileURLWithPath: dumpPath, isDirectory: true)
+                try? FileManager.default.createDirectory(at: dump, withIntermediateDirectories: true)
+                if let cg = source.cgImage() { Self.writePNG(cg, to: dump.appendingPathComponent("source-native.png")) }
+                if let maskImage = Self.grayImage(mask, width: width, height: height) { Self.writePNG(maskImage, to: dump.appendingPathComponent("mask-native.png")) }
+                try? prepared.image.withUnsafeBufferPointer { Data(buffer: $0) }.write(to: dump.appendingPathComponent("image512-native.f32"))
+                try? prepared.mask.withUnsafeBufferPointer { Data(buffer: $0) }.write(to: dump.appendingPathComponent("mask512-native.f32"))
+                try? Data(contentsOf: URL(fileURLWithPath: outputPath)).write(to: dump.appendingPathComponent("model-native.f32"))
+                if let cg = result.cgImage() { Self.writePNG(cg, to: dump.appendingPathComponent("final-native.png")) }
+                let context = ["x": prepared.rect.x, "y": prepared.rect.y, "width": prepared.rect.width, "height": prepared.rect.height,
+                               "sourceWidth": width, "sourceHeight": height] as [String: Int]
+                if let data = try? JSONSerialization.data(withJSONObject: context, options: [.prettyPrinted]) { try? data.write(to: dump.appendingPathComponent("context-native.json")) }
+            }
+            print("file self-test: source=\(width)x\(height) outside=\(outside) alpha=\(alpha) rect=\(prepared.rect.width)x\(prepared.rect.height) output=\(outputURL.path) load=\(response.loadSeconds ?? 0) predict=\(response.predictSeconds ?? 0) phys=\(SystemMemory.physicalFootprintBytes() ?? 0)")
             return outside == 0 && alpha == 0 ? 0 : 1
         } catch {
             print("file self-test: worker failed \(error)")
             return 1
         }
+    }
+
+    private static func writePNG(_ image: CGImage, to url: URL) {
+        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { return }
+        CGImageDestinationAddImage(destination, image, nil)
+        _ = CGImageDestinationFinalize(destination)
+    }
+
+    private static func grayImage(_ bytes: [UInt8], width: Int, height: Int) -> CGImage? {
+        guard width > 0, height > 0, bytes.count == width * height,
+              let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
+        return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 8,
+                       bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(),
+                       bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
+                       provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+    }
+}
+
+extension WorkerMain {
+    static func pressureSelfTest() -> Int32 {
+        final class Box: @unchecked Sendable { var ok = false; var message = ""; var done = false }
+        let box = Box()
+        Task { @MainActor in
+            let model = WorkspaceModel()
+            model.memoryPressure(.warning)
+            let warningOK = model.pressure == .warning && !model.retouchBusy && model.preview == nil
+            model.memoryPressure(.critical)
+            let criticalOK = model.pressure == .critical && !model.retouchBusy && model.retouchPhase.isEmpty
+            model.memoryPressure(.normal)
+            box.ok = warningOK && criticalOK && model.pressure == .normal
+            box.message = "warning=\(warningOK) critical=\(criticalOK)"
+            box.done = true
+        }
+        let deadline = Date().addingTimeInterval(10)
+        while !box.done && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        print("pressure self-test: \(box.message) ok=\(box.ok)")
+        return box.ok ? 0 : 1
+    }
+}
+
+extension WorkerMain {
+    static func stressSelfTest() -> Int32 {
+        let iterations = Int(ProcessInfo.processInfo.environment["PHOTOPREP_E1_STRESS"] ?? "20") ?? 20
+        let client = InferenceWorkerClient()
+        var worst = 0
+        for index in 1...max(1, iterations) {
+            guard let job = makeDiagnosticJob(), let model = Bundle.main.url(forResource: "LaMa-fp32", withExtension: "mlmodelc", subdirectory: "Models") else {
+                print("stress self-test: setup failed at \(index)")
+                return 1
+            }
+            let request = WorkerRequest(
+                jobID: UUID().uuidString,
+                modelPath: model.path,
+                imagePath: job.appendingPathComponent("image.f32").path,
+                maskPath: job.appendingPathComponent("mask.f32").path,
+                outputPath: job.appendingPathComponent("output.f32").path
+            )
+            do {
+                _ = try client.run(request: request, jobDirectory: job, timeout: 30)
+                let phys = Int(SystemMemory.physicalFootprintBytes() ?? 0)
+                worst = max(worst, phys)
+                if index % 5 == 0 || index == iterations {
+                    print("stress self-test: \(index)/\(iterations) phys=\(phys)")
+                }
+            } catch {
+                print("stress self-test: iteration \(index) failed \(error)")
+                try? FileManager.default.removeItem(at: job)
+                return 1
+            }
+            try? FileManager.default.removeItem(at: job)
+        }
+        print("stress self-test: completed \(iterations), worst phys=\(worst)")
+        return 0
     }
 }

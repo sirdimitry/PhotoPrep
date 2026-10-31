@@ -42,6 +42,7 @@ final class WorkspaceModel: ObservableObject {
     private let decoder = PreviewDecoder()
     private let imageDecoder = StraightImageDecoder()
     private let worker = InferenceWorkerClient()
+    private let policy = ResourcePolicy()
     private var importTask: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
     private var retouchTask: Task<Void, Never>?
@@ -50,6 +51,8 @@ final class WorkspaceModel: ObservableObject {
     private var retouchGeneration = UUID()
     private var maskRevision = 0
     private var editRevision = 0
+    private var retouchActiveID: UUID?
+    private var retouchCancellation: CancellationFlag?
     private var pressureSource: DispatchSourceMemoryPressure?
 
     init() {
@@ -67,6 +70,12 @@ final class WorkspaceModel: ObservableObject {
         }
         source.resume()
         pressureSource = source
+        #if DEBUG
+        if let url = DebugLaunchOptions.openPhoto {
+            NSLog("PhotoPrep debug open: %@", url.path)
+            DispatchQueue.main.async { [weak self] in self?.importURLs([url]) }
+        }
+        #endif
     }
 
     func importPhotos() {
@@ -233,12 +242,28 @@ final class WorkspaceModel: ObservableObject {
     }
 
     func processMask() {
-        guard canProcess, let url = selected else { return }
+        guard canProcess, retouchActiveID == nil, let url = selected else { return }
+        if let header = photos.first(where: { $0.url == url }) {
+            do {
+                try policy.admitRetouch(
+                    pixels: UInt64(header.width) * UInt64(header.height),
+                    residentBytes: SystemMemory.physicalFootprintBytes() ?? 0,
+                    availableBytes: SystemMemory.availableBytes(),
+                    pressure: pressure
+                )
+            } catch {
+                retouchError = "memory"
+                return
+            }
+        }
         let snapshot = strokes
         let maskRevisionAtStart = maskRevision
         let editRevisionAtStart = editRevision
         let jobID = UUID()
+        let cancellation = CancellationFlag()
+        retouchCancellation = cancellation
         retouchGeneration = jobID
+        retouchActiveID = jobID
         retouchBusy = true
         retouchPhase = "preparing"
         retouchError = nil
@@ -259,9 +284,10 @@ final class WorkspaceModel: ObservableObject {
                 let source = try await self.imageDecoder.decode(url: url)
                 try Task.checkCancellation()
                 let (mask, prepared) = try await Task.detached(priority: .userInitiated) {
-                    let mask = MaskRenderer.render(width: source.width, height: source.height, strokes: snapshot)
+                    let mask = MaskRenderer.render(width: source.width, height: source.height, strokes: snapshot, isCancelled: { cancellation.isCancelled })
+                    guard !cancellation.isCancelled else { throw RetouchFailure.cancelled }
                     guard !MaskRenderer.isEmpty(mask) else { throw RetouchFailure.emptyMask }
-                    return (mask, try RetouchPreprocessor.prepare(source: source, mask: mask))
+                    return (mask, try RetouchPreprocessor.prepare(source: source, mask: mask, isCancelled: { cancellation.isCancelled }))
                 }.value
                 try Task.checkCancellation()
                 guard let modelURL = self.modelURL else { throw RetouchFailure.modelMissing }
@@ -277,7 +303,7 @@ final class WorkspaceModel: ObservableObject {
                     outputPath: directory.appendingPathComponent("output.f32").path
                 )
                 let response = try await Task.detached(priority: .userInitiated) { [worker] in
-                    try worker.run(request: request, jobDirectory: directory)
+                    try worker.run(request: request, jobDirectory: directory, cancellation: cancellation)
                 }.value
                 try Task.checkCancellation()
                 guard let outputPath = response.outputPath else { throw RetouchFailure.invalidOutputShape }
@@ -290,25 +316,40 @@ final class WorkspaceModel: ObservableObject {
                         source: source,
                         coverage: mask,
                         predicted: predicted,
-                        rect: prepared.rect
+                        rect: prepared.rect,
+                        isCancelled: { cancellation.isCancelled }
                     )
                 }.value
+                guard self.retouchActiveID == jobID else { return }
+                self.retouchActiveID = nil
+                self.retouchCancellation = nil
+                self.retouchBusy = false
+                self.retouchPhase = ""
+                self.retouchTask = nil
                 guard self.retouchGeneration == jobID,
                       self.maskRevision == maskRevisionAtStart,
                       self.editRevision == editRevisionAtStart,
                       self.selected == url else { return }
                 self.resultImage = result
                 self.showingAfter = true
+            } catch is CancellationError {
+                guard self.retouchActiveID == jobID else { return }
+                self.retouchActiveID = nil
+                self.retouchCancellation = nil
                 self.retouchBusy = false
                 self.retouchPhase = ""
                 self.retouchTask = nil
-            } catch is CancellationError {
-                guard self.retouchGeneration == jobID else { return }
+            } catch RetouchFailure.cancelled {
+                guard self.retouchActiveID == jobID else { return }
+                self.retouchActiveID = nil
+                self.retouchCancellation = nil
                 self.retouchBusy = false
                 self.retouchPhase = ""
                 self.retouchTask = nil
             } catch let error as WorkerClientFailure {
-                guard self.retouchGeneration == jobID else { return }
+                guard self.retouchActiveID == jobID else { return }
+                self.retouchActiveID = nil
+                self.retouchCancellation = nil
                 self.retouchBusy = false
                 self.retouchPhase = ""
                 self.retouchTask = nil
@@ -321,11 +362,13 @@ final class WorkspaceModel: ObservableObject {
                     self.retouchError = "worker_launch_failed"
                 case .processExited:
                     self.retouchError = "worker_crashed"
-                case .badResponse(let code):
+                case .badResponse(let code), .workerError(let code):
                     self.retouchError = code
                 }
             } catch {
-                guard self.retouchGeneration == jobID else { return }
+                guard self.retouchActiveID == jobID else { return }
+                self.retouchActiveID = nil
+                self.retouchCancellation = nil
                 self.retouchBusy = false
                 self.retouchPhase = ""
                 self.retouchTask = nil
@@ -335,12 +378,15 @@ final class WorkspaceModel: ObservableObject {
     }
 
     func cancelRetouch() {
+        guard let active = retouchActiveID else { return }
         retouchGeneration = UUID()
+        retouchCancellation?.cancel()
         worker.cancel()
         retouchTask?.cancel()
-        retouchTask = nil
-        retouchBusy = false
-        retouchPhase = ""
+        // Keep busy=true until the task/worker confirms termination. A new
+        // heavy job must not start while the old process is still alive.
+        retouchPhase = "cancelling"
+        _ = active
     }
 
     private var modelURL: URL? {
@@ -386,8 +432,10 @@ final class WorkspaceModel: ObservableObject {
             case .emptyMask: return "empty_mask"
             case .sourceChanged: return "source_changed"
             case .modelMissing: return "model_missing"
-            case .premultipliedAlpha: return "unsupported_alpha"
+            case .premultipliedAlpha, .unsupportedAlphaLayout: return "unsupported_alpha"
             case .insufficientMemory: return "memory"
+            case .unsupportedColorSpace: return "unsupported_color"
+            case .bufferTooSmall: return "invalid_image"
             case .invalidImage, .unsupportedPixelLayout, .invalidMask: return "invalid_image"
             case .nonFiniteOutput, .invalidOutputShape: return "invalid_output"
             case .imageTooLarge: return "image_too_large"

@@ -35,6 +35,28 @@ public struct ResourcePolicy: Sendable {
         return pixels * 8 + UInt64(previewEdge * previewEdge) * 12 + 64 * Self.mib
     }
 
+    /// Estimated combined budget for the app and one LaMa worker. The worker
+    /// number is a measured ceiling (~689 MiB RSS) plus headroom, not a hard
+    /// OS quota.
+    public func admitRetouch(pixels: UInt64, workerBytes: UInt64 = 768 * Self.mib,
+                             residentBytes: UInt64, availableBytes: UInt64?,
+                             pressure: MemoryPressure) throws {
+        guard pressure == .normal else { throw ResourceFailure.memoryPressure }
+        // source RGBA + mask + result RGBA + 512 tensors + staging headroom
+        let tensorBytes: UInt64 = 3 * 512 * 512 * 4
+        let maskTensorBytes: UInt64 = 512 * 512 * 4
+        let stagingBytes: UInt64 = 64 * Self.mib
+        let appBytes: UInt64 = pixels * 9 + tensorBytes + maskTensorBytes + stagingBytes
+        let total: UInt64 = appBytes + workerBytes
+        let (combined, overflow) = total.addingReportingOverflow(residentBytes)
+        let budget = min(4 * 1024 * Self.mib, physicalBytes / 3)
+        guard !overflow, combined <= budget else { throw ResourceFailure.insufficientMemory }
+        guard let availableBytes, availableBytes >= 2_048 * Self.mib,
+              total <= availableBytes - 2_048 * Self.mib else {
+            throw ResourceFailure.insufficientMemory
+        }
+    }
+
     public func admit(bytes: UInt64, residentBytes: UInt64, availableBytes: UInt64?,
                       pressure: MemoryPressure) throws {
         guard pressure == .normal else { throw ResourceFailure.memoryPressure }

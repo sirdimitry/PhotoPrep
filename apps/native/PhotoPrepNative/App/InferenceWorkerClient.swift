@@ -6,6 +6,7 @@ enum WorkerClientFailure: Error, Equatable, Sendable {
     case timedOut
     case cancelled
     case badResponse(String)
+    case workerError(String)
     case processExited(Int32)
 }
 
@@ -17,10 +18,11 @@ final class InferenceWorkerClient: @unchecked Sendable {
     private var process: Process?
     private var cancelled = false
 
-    func run(request: WorkerRequest, jobDirectory: URL, timeout: TimeInterval = 120) throws -> WorkerResponse {
+    func run(request: WorkerRequest, jobDirectory: URL, timeout: TimeInterval = 120, cancellation: CancellationFlag? = nil, onStart: ((Int32) -> Void)? = nil) throws -> WorkerResponse {
         lock.lock()
         cancelled = false
         lock.unlock()
+        if cancellation?.isCancelled == true { throw WorkerClientFailure.cancelled }
         let requestURL = jobDirectory.appendingPathComponent("request.json")
         try JSONEncoder().encode(request).write(to: requestURL, options: .atomic)
 
@@ -43,10 +45,11 @@ final class InferenceWorkerClient: @unchecked Sendable {
         } catch {
             throw WorkerClientFailure.launchFailed
         }
+        onStart?(process.processIdentifier)
 
         let deadline = Date().addingTimeInterval(timeout)
         while process.isRunning {
-            if isCancelled {
+            if isCancelled || cancellation?.isCancelled == true {
                 terminate(process)
                 throw WorkerClientFailure.cancelled
             }
@@ -56,15 +59,19 @@ final class InferenceWorkerClient: @unchecked Sendable {
             }
             Thread.sleep(forTimeInterval: 0.05)
         }
-        if isCancelled {
+        if isCancelled || cancellation?.isCancelled == true {
             throw WorkerClientFailure.cancelled
         }
+        let responseURL = jobDirectory.appendingPathComponent("response.json")
+        let responseData = try? Data(contentsOf: responseURL)
+        let decodedResponse = responseData.flatMap { try? JSONDecoder().decode(WorkerResponse.self, from: $0) }
         guard process.terminationStatus == 0 else {
+            if let decodedResponse, decodedResponse.status == "error" {
+                throw WorkerClientFailure.workerError(decodedResponse.error ?? "worker_failed")
+            }
             throw WorkerClientFailure.processExited(process.terminationStatus)
         }
-        let responseURL = jobDirectory.appendingPathComponent("response.json")
-        guard let data = try? Data(contentsOf: responseURL),
-              let response = try? JSONDecoder().decode(WorkerResponse.self, from: data) else {
+        guard let response = decodedResponse else {
             throw WorkerClientFailure.badResponse("missing_response")
         }
         guard response.jobID == request.jobID else {
