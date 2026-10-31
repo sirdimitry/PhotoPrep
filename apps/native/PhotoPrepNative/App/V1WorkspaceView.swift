@@ -567,7 +567,12 @@ private struct V1CanvasGuides: View {
                                y: imageRect.minY + CGFloat(crop.y) * imageRect.height,
                                width: CGFloat(crop.width) * imageRect.width,
                                height: CGFloat(crop.height) * imageRect.height)
-            context.stroke(Path(frame), with: .color(.yellow), lineWidth: 1.4)
+            var outside = Path()
+            outside.addRect(imageRect)
+            outside.addRect(frame)
+            context.fill(outside, with: .color(.black.opacity(0.22)), style: FillStyle(eoFill: true))
+            context.stroke(Path(frame.insetBy(dx: -1, dy: -1)), with: .color(.black.opacity(0.75)), lineWidth: 3)
+            context.stroke(Path(frame), with: .color(.yellow), lineWidth: 2)
         }
         .allowsHitTesting(false)
     }
