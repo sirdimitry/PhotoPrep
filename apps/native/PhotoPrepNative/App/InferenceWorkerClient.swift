@@ -91,6 +91,16 @@ final class InferenceWorkerClient: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Synchronous variant used when we must not leave a child behind while
+    /// switching photos or closing the window.
+    func cancelAndWait() {
+        lock.lock()
+        cancelled = true
+        let process = self.process
+        lock.unlock()
+        if let process { terminateAndWait(process) }
+    }
+
     private var isCancelled: Bool {
         lock.lock()
         defer { lock.unlock() }

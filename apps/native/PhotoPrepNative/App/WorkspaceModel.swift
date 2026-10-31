@@ -12,11 +12,20 @@ struct RetouchPass: Identifiable, Sendable {
     let id: UUID
     let strokes: [MaskStroke]
     let createdAt: Date
+    let modelID: String
+
+    init(id: UUID = UUID(), strokes: [MaskStroke], createdAt: Date = Date(), modelID: String = "lama") {
+        self.id = id
+        self.strokes = strokes
+        self.createdAt = createdAt
+        self.modelID = modelID
+    }
 }
 
 struct PhotoEditState: Sendable {
     var mask: [MaskStroke] = []
     var passes: [RetouchPass] = []
+    var sourceIdentity: SourceIdentity?
 }
 
 /// LRU cache of pixel results. Recipes/history live separately, so evicting a
@@ -36,18 +45,37 @@ final class PixelCache {
         self.budgetBytes = budgetBytes
     }
 
-    func key(_ photo: URL, _ pass: Int) -> String { "\(photo.path)#\(pass)" }
+    private func maskFingerprint(_ strokes: [MaskStroke]) -> String {
+        var hash: UInt64 = 1469598103934665603
+        func mix(_ value: UInt64) { hash = (hash ^ value) &* 1099511628211 }
+        for stroke in strokes {
+            mix(stroke.width.bitPattern)
+            mix(stroke.erase ? 1 : 0)
+            for point in stroke.points {
+                mix(point.x.bitPattern)
+                mix(point.y.bitPattern)
+            }
+        }
+        return String(format: "%016llx", hash)
+    }
 
-    func get(_ photo: URL, _ pass: Int) -> StraightImage? {
-        let key = key(photo, pass)
+    func key(source: SourceIdentity, passes: [RetouchPass], pass: Int) -> String {
+        let recipe = passes.prefix(pass + 1).map {
+            "\($0.id.uuidString)|\($0.modelID)|\(maskFingerprint($0.strokes))"
+        }.joined(separator: ";")
+        return "\(source.sha256)|\(source.size)|\(source.mtimeNS)|\(recipe)|\(pass)"
+    }
+
+    func get(source: SourceIdentity, passes: [RetouchPass], pass: Int) -> StraightImage? {
+        let key = key(source: source, passes: passes, pass: pass)
         guard var entry = entries[key] else { return nil }
         entry.lastUsed = Date()
         entries[key] = entry
         return entry.image
     }
 
-    func put(_ image: StraightImage, photo: URL, pass: Int) {
-        let key = key(photo, pass)
+    func put(_ image: StraightImage, source: SourceIdentity, passes: [RetouchPass], pass: Int) {
+        let key = key(source: source, passes: passes, pass: pass)
         if let old = entries.removeValue(forKey: key) { bytes -= old.bytes }
         let cost = image.width * image.height * 4
         entries[key] = Entry(image: image, bytes: cost, lastUsed: Date())
@@ -55,6 +83,10 @@ final class PixelCache {
         while bytes > budgetBytes, let oldest = entries.min(by: { $0.value.lastUsed < $1.value.lastUsed })?.key {
             if let removed = entries.removeValue(forKey: oldest) { bytes -= removed.bytes }
         }
+    }
+
+    func contains(source: SourceIdentity, passes: [RetouchPass], pass: Int) -> Bool {
+        entries[key(source: source, passes: passes, pass: pass)] != nil
     }
 
     func invalidate(_ photo: URL) {
@@ -79,26 +111,56 @@ final class WorkspaceModel: ObservableObject {
             guard oldValue != selected else { return }
             if let oldValue { editStates[oldValue, default: PhotoEditState()].mask = strokes }
             cancelPreview()
-            cancelRetouch()
+            cancelRetouch(wait: true)
             resultImage = nil
             passCount = 0
             retouchError = nil
             showingAfter = false
             if let selected {
-                let state = editStates[selected] ?? PhotoEditState()
-                editStates[selected] = state
-                strokes = state.mask
-                passCount = state.passes.count
-                resultImage = passCount > 0 ? pixelCache.get(selected, passCount - 1) : nil
-                cacheBytes = pixelCache.bytes
-                showingAfter = resultImage != nil
-                if resultImage == nil && passCount > 0 { startRestoreIfNeeded() }
+                strokes = []
+                Task { @MainActor [weak self] in await self?.validateIdentityAndLoad(selected) }
                 requestPreview()
             } else {
                 strokes = []
             }
         }
     }
+
+    private func validateIdentityAndLoad(_ url: URL) async {
+        let current = try? await Task.detached(priority: .userInitiated) {
+            try SourceIdentity.capture(url)
+        }.value
+        guard selected == url else { return }
+        var state = editStates[url] ?? PhotoEditState()
+        if let known = state.sourceIdentity, let current, known != current {
+            // The source changed. Never display or use a result from another
+            // byte sequence/mtime; discard the pixel result and stale recipes.
+            state.passes = []
+            state.mask = []
+            state.sourceIdentity = current
+            editStates[url] = state
+            strokes = []
+            passCount = 0
+            resultImage = nil
+            pixelCache.clear()
+            cacheBytes = 0
+            retouchError = "source_changed"
+            return
+        }
+        if state.sourceIdentity == nil, let current { state.sourceIdentity = current }
+        editStates[url] = state
+        strokes = state.mask
+        passCount = state.passes.count
+        if let current, !state.passes.isEmpty {
+            resultImage = pixelCache.get(source: current, passes: state.passes, pass: state.passes.count - 1)
+        } else {
+            resultImage = nil
+        }
+        cacheBytes = pixelCache.bytes
+        showingAfter = resultImage != nil
+        if resultImage == nil && !state.passes.isEmpty { startRestoreIfNeeded() }
+    }
+
     @Published private(set) var preview: PhotoPreview?
     @Published private(set) var importBusy = false
     @Published private(set) var previewBusy = false
@@ -114,6 +176,8 @@ final class WorkspaceModel: ObservableObject {
     @Published private(set) var retouchError: String?
     @Published private(set) var passCount = 0
     @Published private(set) var cacheBytes = 0
+    @Published private(set) var sessionReadOnly: String?
+    private var sessionURL: URL?
 
     var busy: Bool { importBusy || previewBusy || retouchBusy }
 
@@ -154,6 +218,10 @@ final class WorkspaceModel: ObservableObject {
         #if DEBUG
         if CommandLine.arguments.contains("--photoprep-e1-history-selftest") {
             Task { @MainActor [weak self] in await self?.runCumulativeHistorySelfTest() }
+        } else if CommandLine.arguments.contains("--photoprep-e1-cache-source-selftest") {
+            Task { @MainActor [weak self] in await self?.runCacheSourceChangeSelfTest() }
+        } else if CommandLine.arguments.contains("--photoprep-e1-session-replay-selftest") {
+            Task { @MainActor [weak self] in await self?.runSessionReplaySelfTest() }
         } else if CommandLine.arguments.contains("--photoprep-e1-full-stress") {
             Task { @MainActor [weak self] in await self?.runFullStress() }
         } else if CommandLine.arguments.contains("--photoprep-e1-pressure-active-selftest") {
@@ -163,6 +231,91 @@ final class WorkspaceModel: ObservableObject {
             DispatchQueue.main.async { [weak self] in self?.importURLs([url]) }
         }
         #endif
+    }
+
+    func openSessionPanel() {
+        guard !busy, pressure == .normal else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        #if DEBUG
+        if let directory = DebugLaunchOptions.panelDirectory { panel.directoryURL = directory }
+        #endif
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor [weak self] in self?.openSession(url) }
+        }
+    }
+
+    func saveSessionPanel() {
+        guard !photos.isEmpty, !busy, pressure == .normal else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = sessionURL?.lastPathComponent ?? "Untitled.photoprep.json"
+        panel.begin { [weak self] response in
+            guard response == .OK, var url = panel.url else { return }
+            if !url.lastPathComponent.lowercased().hasSuffix(".photoprep.json") {
+                url = url.deletingPathExtension().appendingPathExtension("photoprep.json")
+            }
+            Task { @MainActor [weak self] in self?.saveSession(to: url) }
+        }
+    }
+
+    func openSession(_ url: URL) {
+        let workspace: SessionWorkspace
+        do { workspace = try SessionCodec.load(url) } catch {
+            retouchError = (error as? SessionError)?.code ?? "session_invalid"
+            return
+        }
+        clear()
+        sessionURL = url
+        sessionReadOnly = workspace.readOnlyReason
+        let urls = workspace.photos.map(\.url)
+        importURLs(urls)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            var waited = 0.0
+            while (self.importBusy || self.photos.isEmpty) && waited < 60 {
+                try? await Task.sleep(for: .milliseconds(100)); waited += 0.1
+            }
+            for photo in workspace.photos {
+                var state = PhotoEditState()
+                state.mask = workspace.readOnly ? [] : photo.mask
+                state.passes = workspace.readOnly ? [] : photo.passes.map {
+                    RetouchPass(strokes: $0.strokes, modelID: $0.modelID)
+                }
+                self.editStates[photo.url] = state
+            }
+            if let selected = workspace.selected {
+                // Force didSet even when the imported session selected the
+                // already-selected URL, so masks/passes and replay load.
+                self.selected = nil
+                self.selected = selected
+            }
+            if workspace.readOnly {
+                self.retouchError = "session_read_only"
+                self.sessionReadOnly = workspace.readOnlyReason
+            }
+        }
+    }
+
+    func saveSession(to url: URL) {
+        var workspace = SessionWorkspace(version: 3, photos: [], selected: selected,
+                                         outputWidth: 1136, outputHeight: 710)
+        workspace.photos = photos.map { photo in
+            let state = editStates[photo.url] ?? PhotoEditState()
+            return SessionPhoto(url: photo.url, view: SessionView(), mask: state.mask,
+                                passes: state.passes.map { SessionPass(strokes: $0.strokes, modelID: $0.modelID) })
+        }
+        do {
+            try SessionCodec.save(workspace, to: url)
+            sessionURL = url
+            sessionReadOnly = nil
+            retouchError = nil
+        } catch {
+            retouchError = (error as? SessionError)?.code ?? "session_save_failed"
+        }
     }
 
     func importPhotos() {
@@ -257,14 +410,14 @@ final class WorkspaceModel: ObservableObject {
     func cancel() {
         cancelImport()
         cancelPreview()
-        cancelRetouch()
+        cancelRetouch(wait: true)
     }
 
     func memoryPressure(_ pressure: MemoryPressure) {
         self.pressure = pressure
         guard pressure != .normal else { return }
         cancelPreview()
-        cancelRetouch()
+        cancelRetouch(wait: true)
         preview = nil
         issue = .memoryPressure
         retouchPhase = ""
@@ -281,6 +434,8 @@ final class WorkspaceModel: ObservableObject {
         pixelCache.clear()
         cacheBytes = 0
         passCount = 0
+        sessionReadOnly = nil
+        sessionURL = nil
         issue = nil
         retouchError = nil
         showingAfter = false
@@ -382,6 +537,20 @@ final class WorkspaceModel: ObservableObject {
                     try SourceIdentity.capture(url)
                 }.value
                 try Task.checkCancellation()
+                var currentState = self.editStates[url] ?? PhotoEditState()
+                if let known = currentState.sourceIdentity, known != identity {
+                    currentState.passes = []
+                    currentState.mask = []
+                    currentState.sourceIdentity = identity
+                    self.editStates[url] = currentState
+                    self.pixelCache.clear()
+                    self.cacheBytes = 0
+                    throw RetouchFailure.sourceChanged
+                }
+                if currentState.sourceIdentity == nil {
+                    currentState.sourceIdentity = identity
+                    self.editStates[url] = currentState
+                }
                 let source: StraightImage
                 if priorPasses.isEmpty {
                     source = try await self.imageDecoder.decode(url: url)
@@ -457,14 +626,21 @@ final class WorkspaceModel: ObservableObject {
                 guard self.retouchGeneration == jobID,
                       self.maskRevision == maskRevisionAtStart,
                       self.editRevision == editRevisionAtStart,
-                      self.selected == url else { return }
+                      self.selected == url,
+                      !cancellation.isCancelled else { return }
                 var state = self.editStates[url] ?? PhotoEditState()
-                let pass = RetouchPass(id: UUID(), strokes: snapshot, createdAt: Date())
+                guard state.passes.count == priorPasses.count,
+                      state.sourceIdentity == identity else {
+                    self.retouchError = "source_changed"
+                    return
+                }
+                let pass = RetouchPass(id: UUID(), strokes: snapshot, createdAt: Date(), modelID: "lama")
                 state.passes.append(pass)
                 state.mask = []
                 self.editStates[url] = state
-                self.pixelCache.put(result, photo: url, pass: state.passes.count - 1)
+                self.pixelCache.put(result, source: identity, passes: state.passes, pass: state.passes.count - 1)
                 self.cacheBytes = self.pixelCache.bytes
+                self.syncCurrentResultWithCache()
                 self.passCount = state.passes.count
                 self.strokes = []
                 self.maskRevision += 1
@@ -526,13 +702,18 @@ final class WorkspaceModel: ObservableObject {
     func undoLastPass() {
         guard !retouchBusy, let url = selected, var state = editStates[url],
               let removed = state.passes.popLast() else { return }
-        state.mask = removed.strokes
+        // The undone pass's strokes come before the current refinement strokes.
+        state.mask = removed.strokes + strokes
         editStates[url] = state
-        strokes = removed.strokes
+        strokes = state.mask
         maskRevision += 1
         editRevision += 1
         passCount = state.passes.count
-        resultImage = state.passes.isEmpty ? nil : pixelCache.get(url, state.passes.count - 1)
+        if let identity = state.sourceIdentity, !state.passes.isEmpty {
+            resultImage = pixelCache.get(source: identity, passes: state.passes, pass: state.passes.count - 1)
+        } else {
+            resultImage = nil
+        }
         showingAfter = false
         retouchError = nil
         cacheBytes = pixelCache.bytes
@@ -543,10 +724,19 @@ final class WorkspaceModel: ObservableObject {
         startRestoreIfNeeded()
     }
 
+    private func syncCurrentResultWithCache() {
+        guard let url = selected, let state = editStates[url],
+              let identity = state.sourceIdentity, !state.passes.isEmpty else { return }
+        if !pixelCache.contains(source: identity, passes: state.passes, pass: state.passes.count - 1) {
+            resultImage = nil
+            showingAfter = false
+        }
+    }
+
     private func startRestoreIfNeeded() {
         guard !retouchBusy, retouchActiveID == nil, let url = selected,
               let state = editStates[url], !state.passes.isEmpty,
-              resultImage == nil else { return }
+              let identity = state.sourceIdentity, resultImage == nil else { return }
         let jobID = UUID()
         let cancellation = CancellationFlag()
         retouchActiveID = jobID
@@ -558,20 +748,25 @@ final class WorkspaceModel: ObservableObject {
         retouchTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let identity = try await Task.detached { try SourceIdentity.capture(url) }.value
+                guard let currentIdentity = try? await Task.detached { try SourceIdentity.capture(url) }.value,
+                      currentIdentity == identity else { throw RetouchFailure.sourceChanged }
+                guard self.retouchActiveID == jobID else { return }
                 let result = try await self.replayPasses(url: url, passes: state.passes,
                                                          identity: identity, cancellation: cancellation,
                                                          maskRevision: 0, editRevision: 0)
-                guard self.retouchActiveID == jobID, self.selected == url else { return }
-                self.pixelCache.put(result, photo: url, pass: state.passes.count - 1)
-                self.resultImage = result
-                self.cacheBytes = self.pixelCache.bytes
-                self.showingAfter = true
+                guard self.retouchActiveID == jobID else { return }
                 self.retouchActiveID = nil
                 self.retouchCancellation = nil
                 self.retouchBusy = false
                 self.retouchPhase = ""
                 self.retouchTask = nil
+                guard self.selected == url, !cancellation.isCancelled,
+                      self.editStates[url]?.sourceIdentity == identity else { return }
+                self.pixelCache.put(result, source: identity, passes: state.passes, pass: state.passes.count - 1)
+                self.resultImage = result
+                self.cacheBytes = self.pixelCache.bytes
+                self.syncCurrentResultWithCache()
+                self.showingAfter = true
             } catch {
                 guard self.retouchActiveID == jobID else { return }
                 self.retouchActiveID = nil
@@ -586,10 +781,18 @@ final class WorkspaceModel: ObservableObject {
 
     private func replayPasses(url: URL, passes: [RetouchPass], identity: SourceIdentity,
                               cancellation: CancellationFlag, maskRevision: Int, editRevision: Int) async throws -> StraightImage {
+        if let header = photos.first(where: { $0.url == url }) {
+            do {
+                try policy.admitRetouch(pixels: UInt64(header.width) * UInt64(header.height),
+                                        residentBytes: SystemMemory.physicalFootprintBytes() ?? 0,
+                                        availableBytes: SystemMemory.availableBytes(),
+                                        pressure: pressure)
+            } catch { throw RetouchFailure.insufficientMemory }
+        }
         var current: StraightImage?
         for (index, pass) in passes.enumerated() {
             try Task.checkCancellation()
-            if let cached = pixelCache.get(url, index) {
+            if let cached = pixelCache.get(source: identity, passes: passes, pass: index) {
                 current = cached
                 continue
             }
@@ -599,16 +802,16 @@ final class WorkspaceModel: ObservableObject {
             guard var source = current else { throw RetouchFailure.invalidImage }
             retouchPhase = "restoring \(index + 1)/\(passes.count)"
             source = try await runPass(source: source, url: url, strokes: pass.strokes,
-                                       identity: identity, cancellation: cancellation)
+                                       modelID: pass.modelID, identity: identity, cancellation: cancellation)
             current = source
-            pixelCache.put(source, photo: url, pass: index)
+            pixelCache.put(source, source: identity, passes: passes, pass: index)
             cacheBytes = pixelCache.bytes
         }
         guard let result = current else { throw RetouchFailure.invalidImage }
         return result
     }
 
-    private func runPass(source: StraightImage, url: URL, strokes: [MaskStroke],
+    private func runPass(source: StraightImage, url: URL, strokes: [MaskStroke], modelID: String,
                          identity: SourceIdentity, cancellation: CancellationFlag) async throws -> StraightImage {
         let jobID = UUID()
         var jobDirectory: URL?
@@ -621,7 +824,7 @@ final class WorkspaceModel: ObservableObject {
             try RetouchPreprocessor.prepare(source: source, mask: mask, isCancelled: { cancellation.isCancelled })
         }.value
         try Task.checkCancellation()
-        guard let modelURL else { throw RetouchFailure.modelMissing }
+        guard let modelURL = modelURL(for: modelID) else { throw RetouchFailure.modelMissing }
         let directory = try Self.makeJobDirectory(jobID)
         jobDirectory = directory
         try Self.writePrepared(prepared, to: directory)
@@ -644,16 +847,22 @@ final class WorkspaceModel: ObservableObject {
                                                  rect: prepared.rect, isCancelled: { cancellation.isCancelled })
     }
 
-    func cancelRetouch() {
+    func cancelRetouch(wait: Bool = false) {
         guard let active = retouchActiveID else { return }
         retouchGeneration = UUID()
         retouchCancellation?.cancel()
         worker.cancel()
+        if wait { worker.cancelAndWait() }
         retouchTask?.cancel()
         // Keep busy=true until the task/worker confirms termination. A new
         // heavy job must not start while the old process is still alive.
         retouchPhase = "cancelling"
         _ = active
+    }
+
+    private func modelURL(for modelID: String) -> URL? {
+        guard modelID == "lama" else { return nil }
+        return modelURL
     }
 
     private var modelURL: URL? {
@@ -809,14 +1018,20 @@ final class WorkspaceModel: ObservableObject {
         let replayRestored = resultImage != nil && passCount == 2
         // Photo switch must keep masks/passes.
         selected = astronaut
-        await Task.yield()
+        try? await Task.sleep(for: .milliseconds(500))
         let astronautPasses = passCount
         selected = coffee
-        await Task.yield()
+        try? await Task.sleep(for: .milliseconds(700))
         let switchKept = passCount == 2 && astronautPasses == 0
-        // Undo last pass must return its mask for refinement.
+        // Undo last pass must return its mask BEFORE the current refinement.
+        let removedMask = editStates[coffee]?.passes.last?.strokes ?? []
+        let refinement = [MaskStroke(points: [MaskPoint(x: 0.2, y: 0.7), MaskPoint(x: 0.4, y: 0.7)], width: 0.08)]
+        setHistoryMask(refinement)
         undoLastPass()
-        let undoKeptOne = passCount == 1 && !strokes.isEmpty
+        let undoOrdered = strokes.count == removedMask.count + refinement.count
+            && Array(strokes.prefix(removedMask.count)) == removedMask
+            && strokes.last?.points == refinement.last?.points
+        let undoKeptOne = passCount == 1 && !strokes.isEmpty && undoOrdered
         let mask3 = [MaskStroke(points: [MaskPoint(x: 0.1, y: 0.5), MaskPoint(x: 0.3, y: 0.5)], width: 0.1)]
         setHistoryMask(mask3)
         let passesBeforeCancel = passCount
@@ -837,7 +1052,82 @@ final class WorkspaceModel: ObservableObject {
               outsideSame ? "yes" : "no", clearKeptResult ? "yes" : "no",
               toggleKeptRecipe ? "yes" : "no", replayRestored ? "yes" : "no",
               switchKept ? "yes" : "no", undoKeptOne ? "yes" : "no")
-        NSLog("E1.3 history cancel mask kept=\(cancelKeptMask ? "yes" : "no")")
+        NSLog("E1.3 history cancel mask kept=\(cancelKeptMask ? "yes" : "no") undoOrdered=\(undoOrdered ? "yes" : "no")")
+        NSApplication.shared.terminate(nil)
+    }
+
+    func runSessionReplaySelfTest() async {
+        guard let photo = DebugLaunchOptions.openPhoto else {
+            NSApplication.shared.terminate(nil); return
+        }
+        importURLs([photo])
+        var waited = 0.0
+        while (selected == nil || importBusy) && waited < 30 {
+            try? await Task.sleep(for: .milliseconds(100)); waited += 0.1
+        }
+        setHistoryMask([MaskStroke(points: [MaskPoint(x: 0.05, y: 0.1), MaskPoint(x: 0.3, y: 0.1)], width: 0.1)])
+        processMask(); await waitWhileBusy("session pass1")
+        setHistoryMask([MaskStroke(points: [MaskPoint(x: 0.05, y: 0.3), MaskPoint(x: 0.3, y: 0.3)], width: 0.1)])
+        processMask(); await waitWhileBusy("session pass2")
+        guard let before = resultImage else {
+            NSLog("E1.4 session-replay: no result before save")
+            NSApplication.shared.terminate(nil); return
+        }
+        let session = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("PhotoPrep Native/e1.4-reopen.photoprep.json")
+        saveSession(to: session)
+        let saveError = retouchError
+        clear()
+        openSession(session)
+        waited = 0
+        while (selected == nil || importBusy || retouchBusy || resultImage == nil) && waited < 90 {
+            try? await Task.sleep(for: .milliseconds(100)); waited += 0.1
+        }
+        let after = resultImage
+        let equal = after != nil && before.width == after!.width && before.height == after!.height && before.pixels == after!.pixels
+        let report: [String: Any] = ["saveError": saveError ?? "", "reopened": selected != nil,
+                                     "restored": after != nil, "pixelsEqual": equal,
+                                     "beforeBytes": before.pixels.count, "afterBytes": after?.pixels.count ?? 0,
+                                     "passes": passCount, "sessionReadOnly": sessionReadOnly ?? ""]
+        writeDebugJSON(report, name: "e1.4-session-replay")
+        NSLog("E1.4 session-replay: reopened=\(selected != nil ? "yes" : "no") restored=\(after != nil ? "yes" : "no") equal=\(equal ? "yes" : "no")")
+        try? FileManager.default.removeItem(at: session)
+        NSApplication.shared.terminate(nil)
+    }
+
+    func runCacheSourceChangeSelfTest() async {
+        guard let source = DebugLaunchOptions.openPhoto else {
+            NSApplication.shared.terminate(nil); return
+        }
+        let copy = source.deletingLastPathComponent().appendingPathComponent("e1.4-cache-source.png")
+        try? FileManager.default.removeItem(at: copy)
+        do { try FileManager.default.copyItem(at: source, to: copy) } catch {
+            NSLog("E1.4 cache-source: copy failed"); NSApplication.shared.terminate(nil); return
+        }
+        importURLs([source, copy])
+        var waited = 0.0
+        while (photos.count < 2 || importBusy) && waited < 60 {
+            try? await Task.sleep(for: .milliseconds(100)); waited += 0.1
+        }
+        selected = copy
+        try? await Task.sleep(for: .milliseconds(500))
+        setHistoryMask([MaskStroke(points: [MaskPoint(x: 0.1, y: 0.1), MaskPoint(x: 0.3, y: 0.1)], width: 0.1)])
+        processMask()
+        await waitWhileBusy("cache-source pass")
+        let had = resultImage != nil && passCount == 1
+        if let handle = try? FileHandle(forWritingTo: copy) {
+            try? handle.seekToEnd(); try? handle.write(contentsOf: Data([0])); try? handle.close()
+        }
+        selected = source
+        try? await Task.sleep(for: .milliseconds(300))
+        selected = copy
+        try? await Task.sleep(for: .milliseconds(900))
+        let cleared = resultImage == nil && passCount == 0 && retouchError == "source_changed"
+        let report: [String: Any] = ["cacheWasPresent": had, "sourceChangeCleared": cleared,
+                                     "error": retouchError ?? "", "passCount": passCount]
+        writeDebugJSON(report, name: "e1.4-cache-source")
+        NSLog("E1.4 cache-source: had=\(had ? "yes" : "no") cleared=\(cleared ? "yes" : "no")")
+        try? FileManager.default.removeItem(at: copy)
         NSApplication.shared.terminate(nil)
     }
 
