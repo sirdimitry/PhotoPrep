@@ -158,6 +158,22 @@ struct RetouchPanel: View {
                 Button(text("Очистить", "Clear")) { model.clearMask() }
                     .disabled(model.strokes.isEmpty || model.retouchBusy)
             }
+            if model.passCount > 0 {
+                HStack {
+                    Text(text("Проходов: \(model.passCount)", "Passes: \(model.passCount)"))
+                        .font(.caption)
+                    Spacer()
+                    Button(text("Отменить проход", "Undo Pass")) { model.undoLastPass() }
+                        .font(.caption)
+                        .disabled(!model.canUndoPass)
+                }
+            }
+            if model.passCount > 0 && model.resultImage == nil && !model.retouchBusy {
+                Button(text("Восстановить результат", "Restore result")) {
+                    model.restoreCurrentResult()
+                }
+                .font(.caption)
+            }
             Button {
                 model.processMask()
             } label: {
