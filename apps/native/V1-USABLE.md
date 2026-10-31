@@ -1,8 +1,8 @@
-# PhotoPrep Native — первая пригодная Native-версия
+# PhotoPrep Native — v1 candidate (полный UI-маршрут не пройден)
 
 **Дата:** 31.10.2026  
 **Ветка:** `v1/native-usable`  
-**Коммит функций:** `38a80d5` (crop/logo/export); отчёт/STATUS — этот коммит.  
+**Коммиты:** `38a80d5` (crop/logo/export), `3e019c0` (atomic export/source-over/identity); отчёт/STATUS — этот коммит.  
 **Сборка:** `work/v1-build/Build/Products/Debug/PhotoPrep Native.app` (ad-hoc signed).  
 Python, окружение, веса и пользовательские данные не менялись. Публичного релиза нет.
 
@@ -16,7 +16,8 @@ Python, окружение, веса и пользовательские дан�
 * Сессии `.photoprep.json`: схемы 1–7 read; поддерживаемое пишется минимально (2/3/5/6), атомарно 0600; crop/logo поддерживаются; MI-GAN/SDXL read-only.
 * **Кадрирование**: фиксированная рамка output aspect, перетаскивание/масштабирование изображения, точные выходные размеры, undo crop, состояние на фото.
 * **Логотип**: локальный PNG с alpha, путь/размер/прозрачность/x/y/enabled/mode, применение к одному/всем фото; template trim alpha; render по геометрии Python.
-* **Экспорт PNG/JPEG**: последовательная очередь, cancel, replay ретуши, crop, resize, logo, новые файлы без перезаписи/ symlink, белый фон для JPEG, без метаданных.
+* **Экспорт PNG/JPEG**: sequential queue, cancel, replay, crop, resize, logo; temp → fsync → link publish without replace; collisions vs I/O; white JPEG; no metadata.
+* **Alpha/logo**: straight source-over for transparent/semitransparent base; alpha PNG preserved; JPEG white flatten.
 
 ## Сборка и запуск
 
@@ -35,7 +36,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 
 ## Фактические проверки
 
-* **35 Swift tests**: 13 session/output tests + 19 history/scale/decoder/cancellation + output editing.
+* **36 Swift tests**: session/output/crop/logo/alpha/export + history/scale/decoder/cancellation.
 * **V1 export self-test, 2 фото**: PNG 1136×710 для coffee/astronaut, logo overlay, crop, original SHA unchanged:
 
 ```json

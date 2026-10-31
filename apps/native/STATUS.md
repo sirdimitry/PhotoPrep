@@ -15,7 +15,7 @@
 
 ## Проверки
 
-35 Swift tests; app state 999×777/view; Python fixtures 1–7; 2-photo v1 export 1136×710, originals SHA unchanged; crop/logo/export unit tests; source change recipes kept; read-only save no overwrite.
+36 Swift tests; app state 999×777/view; Python fixtures 1–7; 2-photo v1 export 1136×710, originals SHA unchanged; crop/logo/export unit tests; source change recipes kept; read-only save no overwrite.
 
 ## Ограничения
 

@@ -1,6 +1,6 @@
 # PhotoPrep Native
 
-SwiftUI macOS application, **first usable Native v1 slice**. It has a
+SwiftUI macOS application, **Native v1 candidate (full UI route not accepted)**. It has a
 straight-RGBA canvas (brush/eraser/undo), one LaMa FP32 pass in a separate
 self-exec worker, before/after, progress/cancel/timeout, job-scoped cancellation,
 and exact outside-mask / alpha preservation. Quality is close to Python on
