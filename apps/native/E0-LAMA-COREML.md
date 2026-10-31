@@ -7,7 +7,7 @@
 
 ## 1. Короткий результат
 
-* Исходный PyTorch big-lama загружен, веса сопоставлены с ONNX: 452 именованных инициализатора совпадают побитово; 154 анонимных `onnx::Conv_*` совпадают с BN-folded весами (≤1.2e-7); PyTorch vs ONNX output max 0.0275 (0..255), mean 0.00014.
+* Исходный PyTorch big-lama загружен, веса сопоставлены с ONNX: 452 именованных инициализатора совпадают побитово; 154 анонимных `onnx::Conv_*`; для представительных слоёв BN folding совпадает до ≤1.2e-7; PyTorch vs ONNX output max 0.0275 (0..255), mean 0.00014.
 * Получен `.mlpackage` FP32, fixed 512×512, ML Program, macOS 14 target, tensor I/O. Package 205 208 906 B, compiled 195.9 MiB; conversion 21.39 s.
 * Core ML GPU/ALL vs ONNX на 8 fixtures: max 0.000648 (0..255), mean 4.3e-6, ни одного пикселя >1 LSB. CPU_ONLY: max 0.004692.
 * Финальный Qt-композит: `changed_outside = 0`, `changed_alpha = 0` для всех движков; Core ML vs ONNX final max 1 LSB, mean 4e-7.
