@@ -1,9 +1,9 @@
-# PhotoPrep Native — v1 candidate (полный UI-маршрут не пройден)
+# PhotoPrep Native — кандидат для личной проверки (полный UI-маршрут не подтверждён)
 
 **Дата:** 31.10.2026  
 **Ветка:** `v1/native-usable`  
 **Коммиты:** `38a80d5` (crop/logo/export), `3e019c0` (atomic export/source-over/identity); отчёт/STATUS — этот коммит.  
-**Сборка:** `work/v1-build/Build/Products/Debug/PhotoPrep Native.app` (ad-hoc signed).  
+**Сборка для проверки:** `work/PhotoPrep-Native-v1-candidate.app` (ad-hoc signed; копия `work/v1-build/...`).  
 Python, окружение, веса и пользовательские данные не менялись. Публичного релиза нет.
 
 ## Что уже работает
