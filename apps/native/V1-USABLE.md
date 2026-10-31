@@ -78,3 +78,11 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 ## Ограничения первой версии
 
 LaMa only, Apple Silicon, local. MI-GAN/SDXL/FP16/XPC/crop/logo/export UI features included but session UI acceptance not complete. Model 196 MiB in bundle.
+
+## Проверка эпизода завершения при импорте
+
+* В `~/Library/Logs/DiagnosticReports` за 31.10 нет crash report PhotoPrep Native; последние `.ips` — 29.10.
+* Unified log для завершившегося PID показывает `termination reported by proc_exit` и `QUITTING`, без exception/abort/signal/crash. Это **нормальный выход процесса**, не падение.
+* Причина именно этого выхода в журнале не записана; утверждать «автоматизация» без записи нельзя.
+* Повторный минимальный UI-прогон актуальной сборки: запуск → NSOpenPanel → выбор `one.png` (400×300) мышью → Open. Приложение осталось живо, изображение отображено (PID жил >1 мин), crash report не появился.
+* В предыдущем прогоне использовались синтетические `CGEvent`/AppleScript-нажатия; они не воспроизвели завершение при обычном клике. Это не признаётся обычным ограничением автоматизации; конкретный триггер не доказан.
