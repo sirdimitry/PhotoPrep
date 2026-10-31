@@ -35,3 +35,17 @@ Screenshots in `work/layout-interaction-artifacts/`:
 * A full export from this UI and pixel comparison of the yellow frame against that exported result were **not** completed. The frame and export share `effectiveCrop`, but this is not claimed as a UI-verified export comparison.
 * Crop/logo/export/session behavior was not otherwise changed.
 * No public release, no LaMa/session/engine changes.
+
+## Final short verification (23:08–23:16)
+
+* Space-held temporary pan was exercised with a real held Space key on both portrait and landscape: image moved, brush did not paint, crop recipe/viewport state remained view-only. Captures: `space-portrait-before/after.png`, `space-landscape-before/after.png`.
+* UI export completed for both orientations:
+  * portrait PNG/JPEG = 1136×710;
+  * landscape PNG/JPEG = 1136×710;
+  * portrait frame excludes the top MARK; export excludes it too;
+  * landscape frame includes the top MARK; export includes it too;
+  * no rotation, flip or offset observed in either output.
+* Metadata defect found during verification: ImageIO added EXIF/Photoshop segments to exports. Fixed in `6509ee2`; new PNG has only `srgb`, new JPEG has only JFIF, no EXIF/Photoshop. `export-portrait.png/.jpg` and `export-landscape.png/.jpg` are the clean outputs.
+* 36 Swift tests pass.
+
+**Not completed:** one uninterrupted UI run of mask → retouch → crop → logo → export. Mask and crop were exercised; retouch/logo/export are covered by core/self-tests and by earlier runs, but the single combined UI route is not claimed. Space-held pan and export/frame comparison are verified.
