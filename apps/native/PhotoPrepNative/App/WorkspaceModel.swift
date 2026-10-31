@@ -463,6 +463,30 @@ final class WorkspaceModel: ObservableObject {
         }
     }
 
+    func importFolder() {
+        guard !busy, pressure == .normal else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Открыть папку"
+        panel.begin { [weak self] response in
+            guard response == .OK, let folder = panel.url else { return }
+            let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .contentTypeKey]
+            let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: keys,
+                                                                      options: [.skipsHiddenFiles])) ?? []
+            let images = urls.filter { url in
+                guard let values = try? url.resourceValues(forKeys: Set(keys)),
+                      values.isRegularFile == true, values.isSymbolicLink != true,
+                      let type = values.contentType else { return false }
+                return type.conforms(to: .image) && (type.conforms(to: .jpeg) || type.conforms(to: .png) ||
+                       type.conforms(to: .tiff) || type.conforms(to: .bmp) || type.conforms(to: .webP))
+            }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+            Task { @MainActor [weak self] in self?.importURLs(images) }
+        }
+    }
+
     func importPhotos() {
         guard !importBusy, !retouchBusy, pressure == .normal else { return }
         let panel = NSOpenPanel()

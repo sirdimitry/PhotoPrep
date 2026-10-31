@@ -95,7 +95,7 @@ struct PhotoPrepNativeApp: App {
 
     var body: some Scene {
         Window("PhotoPrep Native", id: "workspace") {
-            WorkspaceView(model: workspace, language: language)
+            V1WorkspaceView(model: workspace, language: language)
                 .preferredColorScheme(appearance == "light" ? .light : .dark)
                 .frame(minWidth: 880, minHeight: 600)
                 .onDisappear { workspace.suspend() }
