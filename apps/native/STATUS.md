@@ -1,12 +1,13 @@
 # PhotoPrep Native — текущий статус
 
-31.10.2026, branch `e1.5/session-integrity`, base E1.4 `cfaa6ce` (E0 `101f6bf`).
+31.10.2026, branch `e1.6/session-ui`, base E1.5 `6287e54` (E0 `101f6bf`).
 Исторические отчёты не переписаны: [E0-LAMA-COREML.md](E0-LAMA-COREML.md),
 [E1-LAMA-WORKER.md](E1-LAMA-WORKER.md), [E1.1-QUALITY-STABILITY.md](E1.1-QUALITY-STABILITY.md),
 [E1.2-ACCEPTANCE.md](E1.2-ACCEPTANCE.md),
 [E1.3-QUALITY-HISTORY.md](E1.3-QUALITY-HISTORY.md),
 [E1.4-HISTORY-SESSIONS.md](E1.4-HISTORY-SESSIONS.md),
-[E1.5-SESSION-INTEGRITY.md](E1.5-SESSION-INTEGRITY.md), [REFERENCE-RESULTS.md](REFERENCE-RESULTS.md).
+[E1.5-SESSION-INTEGRITY.md](E1.5-SESSION-INTEGRITY.md),
+[E1.6-SESSION-UI.md](E1.6-SESSION-UI.md), [REFERENCE-RESULTS.md](REFERENCE-RESULTS.md).
 
 ## Реально работает
 
@@ -96,6 +97,12 @@
 * **E1.5 tests.** 29 Swift tests; app session-state 999×777/view yes; Python
   fixtures 1–7; reopen replay pixelsEqual. Real session UI open/save/reopen
   заблокирован memory pressure warning и не принят.
+
+* **E1.6 file path/dirty.** Выбор конкретного `.photoprep.json`; отдельный
+  folder scope; incomplete/missing не применяется; dirty state (open/save/new,
+  Open/New/Close/Cmd+Q Save/Discard/Cancel); JSON I/O off-main; generation.
+* **E1.6 tests.** 31 Swift tests; app state 999×777/view yes; Python fixtures.
+  Real session UI remains blocked by system memory pressure warning.
 
 ## Проверено
 
