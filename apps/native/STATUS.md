@@ -1,10 +1,11 @@
 # PhotoPrep Native — текущий статус
 
-31.10.2026, branch `e1.3/quality-history`, base E1.2 `1c8a33e` (E0 `101f6bf`).
+31.10.2026, branch `e1.4/history-sessions`, base E1.3 `db937c3` (E0 `101f6bf`).
 Исторические отчёты не переписаны: [E0-LAMA-COREML.md](E0-LAMA-COREML.md),
 [E1-LAMA-WORKER.md](E1-LAMA-WORKER.md), [E1.1-QUALITY-STABILITY.md](E1.1-QUALITY-STABILITY.md),
 [E1.2-ACCEPTANCE.md](E1.2-ACCEPTANCE.md),
-[E1.3-QUALITY-HISTORY.md](E1.3-QUALITY-HISTORY.md), [REFERENCE-RESULTS.md](REFERENCE-RESULTS.md).
+[E1.3-QUALITY-HISTORY.md](E1.3-QUALITY-HISTORY.md),
+[E1.4-HISTORY-SESSIONS.md](E1.4-HISTORY-SESSIONS.md), [REFERENCE-RESULTS.md](REFERENCE-RESULTS.md).
 
 ## Реально работает
 
@@ -75,6 +76,18 @@
   состояние; LRU cache 384 MiB, replay после eviction; history UI pass count.
   Self-test: outside/clear/toggle/replay/switch/undo/cancel-mask = yes.
 
+* **E1.4 cache identity.** Cache key = SourceIdentity + pass UUIDs + modelID +
+  mask fingerprint. Source change clears result/recipes; no stale display.
+* **E1.4 modelID/lifecycle.** RetouchPass.modelID; replay uses pass model, not
+  current. cancelAndWait on switch/close; restore clears activeID/busy/task on
+  stale paths; commit checks jobID/source/recipe/cancel; replay obeys budget;
+  resultImage released when LRU evicts current key.
+* **E1.4 undo order.** Undo pass returns removed mask + current refinement, in
+  that order; clear mask keeps retouch; history self-test all yes.
+* **E1.4 sessions.** Schemas 1–7 read; supported saved as schema 2/3 atomically
+  mode 0600; crop/logo/unsupported models read-only, no overwrite; Python→Native
+  →Python fixtures pass; reopen replay pixelsEqual=true. 24 Swift tests.
+
 ## Проверено
 
 * 16 Swift tests: preview, policy, CMYK reject, hidden RGB/alpha, mask
@@ -108,8 +121,10 @@
 * Native vs Python на одинаковых масках выполнен для coffee/astronaut/grass/
   brick и 2 Мп big-context; blind 100/200% независимая оценка не выполнена.
 * Нет crop/logo/export/session/MI-GAN/SDXL/FP16/quantization.
-* History — in-memory, без sessions/диска; replay проверен на coffee, не на
-  нескольких 40 Мп проходах.
+* Sessions save UI не пройден вручную; core/CLI/Python fixtures проверены.
+  Interrupted save проверен как no-overwrite, не kill посреди rename.
+* Replay+switch/cancel одновременно и несколько больших фото с eviction не
+  прогнаны полностью; cache 384 MiB, 40 Мп результат 160 MB.
 * Worker — self-exec Process, не XPC service; sandbox наследуется, crash-домен
   отдельный, но launchd/XPC lifecycle не реализован.
 * Модель 196 MiB в app bundle; лицензия/распространение требуют подтверждения.

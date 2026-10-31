@@ -1,14 +1,15 @@
 # PhotoPrep Native
 
-SwiftUI macOS application with a **limited native LaMa E1.3 slice**. It has a
+SwiftUI macOS application with a **limited native LaMa E1.4 slice**. It has a
 straight-RGBA canvas (brush/eraser/undo), one LaMa FP32 pass in a separate
 self-exec worker, before/after, progress/cancel/timeout, job-scoped cancellation,
 and exact outside-mask / alpha preservation. Quality is close to Python on
 coffee/astronaut; grass texture and a few mask pixels remain unresolved. It is
 not a release. The working Python application remains in [../python/](../python/).
-[Current status and limits](STATUS.md), [E1.3 report](E1.3-QUALITY-HISTORY.md),
-[E1.2 acceptance report](E1.2-ACCEPTANCE.md), [E1.1 report](E1.1-QUALITY-STABILITY.md),
-[E1 report](E1-LAMA-WORKER.md), and [E0 report](E0-LAMA-COREML.md).
+[Current status and limits](STATUS.md), [E1.4 report](E1.4-HISTORY-SESSIONS.md),
+[E1.3 report](E1.3-QUALITY-HISTORY.md), [E1.2 acceptance report](E1.2-ACCEPTANCE.md),
+[E1.1 report](E1.1-QUALITY-STABILITY.md), [E1 report](E1-LAMA-WORKER.md), and
+[E0 report](E0-LAMA-COREML.md).
 
 ## Build and test
 
@@ -22,7 +23,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild -project apps/native/PhotoPrepNative.xcodeproj -scheme PhotoPrepNative \
   -configuration Debug -destination 'platform=macOS,arch=arm64' \
-  -derivedDataPath work/e1.3-build build CODE_SIGNING_ALLOWED=NO
+  -derivedDataPath work/e1.4-build build CODE_SIGNING_ALLOWED=NO
 ```
 
 The app target has a build phase that copies the compiled model from
@@ -52,7 +53,7 @@ app container (or otherwise accessible under App Sandbox), not `/tmp`.
 Use `PHOTOPREP_E1_WIDTH` / `PHOTOPREP_E1_HEIGHT` to exercise 1024×768,
 4000×3000 and 8000×5000 synthetic sources.
 
-Development app: `work/e1.3-build/Build/Products/Debug/PhotoPrep Native.app`.
+Development app: `work/e1.4-build/Build/Products/Debug/PhotoPrep Native.app`.
 It is not installed over Python. The project uses ad-hoc development signing,
 not Developer ID/notarization. Internal build version 0.0.1 is not a release number.
 Native CI checks build/core tests; real UI/inference/release checks remain separate.
@@ -68,6 +69,7 @@ capabilities and their own verification.
 * [Verified Python behavior](BEHAVIOR.md)
 * [Quality and resource acceptance](QUALITY-SAFETY.md)
 * [Roadmap](ROADMAP.md)
+* [E1.4 history/session report](E1.4-HISTORY-SESSIONS.md)
 * [E1.3 quality/history report](E1.3-QUALITY-HISTORY.md)
 * [E1.2 acceptance report](E1.2-ACCEPTANCE.md)
 * [E1.1 quality/stability report](E1.1-QUALITY-STABILITY.md)

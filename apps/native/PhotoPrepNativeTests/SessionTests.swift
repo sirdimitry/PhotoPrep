@@ -67,4 +67,13 @@ final class SessionTests: XCTestCase {
         let loaded = try SessionCodec.load(url)
         XCTAssertThrowsError(try SessionCodec.save(loaded, to: url))
     }
+    func testFailedSaveDoesNotReplaceExistingFile() throws {
+        let url = try fixture(1)
+        let original = try Data(contentsOf: url)
+        var workspace = try SessionCodec.load(url)
+        workspace.photos[0].crop = SessionCrop(x: 0.1, y: 0.1, width: 0.5, height: 0.5)
+        XCTAssertThrowsError(try SessionCodec.save(workspace, to: url))
+        XCTAssertEqual(try Data(contentsOf: url), original)
+    }
+
 }
