@@ -26,6 +26,9 @@ struct PhotoPrepMain {
         if CommandLine.arguments.contains("--photoprep-e1-cancel-selftest") {
             exit(WorkerMain.cancelSelfTest())
         }
+        if CommandLine.arguments.contains("--photoprep-e1-file-selftest") {
+            exit(WorkerMain.fileSelfTest())
+        }
         PhotoPrepNativeApp.main()
     }
 }

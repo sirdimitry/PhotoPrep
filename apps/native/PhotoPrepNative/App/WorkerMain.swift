@@ -1,5 +1,8 @@
 import Foundation
 import CoreML
+import ImageIO
+import UniformTypeIdentifiers
+import CoreGraphics
 
 /// Command-line mode of the app binary. It is launched by the UI process with
 /// `--photoprep-worker <job-directory>` and never initializes SwiftUI/AppKit.
@@ -298,5 +301,94 @@ extension WorkerMain {
         _ = semaphore.wait(timeout: .now() + 10)
         print("cancel self-test: \(box.value)")
         return box.value == "cancelled" ? 0 : 1
+    }
+}
+
+extension WorkerMain {
+    /// Real-photo check: decode a permitted file through StraightImageDecoder,
+    /// run the same worker, composite and write a PNG for visual review.
+    static func fileSelfTest() -> Int32 {
+        guard let path = ProcessInfo.processInfo.environment["PHOTOPREP_E1_FILE"], !path.isEmpty,
+              let model = Bundle.main.url(forResource: "LaMa-fp32", withExtension: "mlmodelc", subdirectory: "Models") else {
+            print("file self-test: missing PHOTOPREP_E1_FILE or model")
+            return 1
+        }
+        let url = URL(fileURLWithPath: path)
+        final class Box: @unchecked Sendable { var image: StraightImage?; var error = "" }
+        let box = Box()
+        let semaphore = DispatchSemaphore(value: 0)
+        Task.detached {
+            do {
+                let decoder = StraightImageDecoder()
+                box.image = try await decoder.decode(url: url)
+            } catch {
+                box.error = String(describing: error)
+            }
+            semaphore.signal()
+        }
+        _ = semaphore.wait(timeout: .now() + 60)
+        guard let source = box.image else {
+            print("file self-test: decode failed \(box.error)")
+            return 1
+        }
+        let width = source.width
+        let height = source.height
+        let strokes = [
+            MaskStroke(points: [MaskPoint(x: 0.02, y: 0.03), MaskPoint(x: 0.38, y: 0.03)], width: 0.16),
+            MaskStroke(points: [MaskPoint(x: 0.02, y: 0.12), MaskPoint(x: 0.38, y: 0.12)], width: 0.16),
+            MaskStroke(points: [MaskPoint(x: 0.02, y: 0.21), MaskPoint(x: 0.38, y: 0.21)], width: 0.16),
+        ]
+        let mask = MaskRenderer.render(width: width, height: height, strokes: strokes)
+        guard !MaskRenderer.isEmpty(mask), let prepared = try? RetouchPreprocessor.prepare(source: source, mask: mask) else {
+            print("file self-test: mask/prepare failed")
+            return 1
+        }
+        let jobID = UUID()
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("PhotoPrep Native/Jobs", isDirectory: true)
+        let directory = support.appendingPathComponent(jobID.uuidString, isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try prepared.image.withUnsafeBufferPointer { Data(buffer: $0) }.write(to: directory.appendingPathComponent("image.f32"))
+            try prepared.mask.withUnsafeBufferPointer { Data(buffer: $0) }.write(to: directory.appendingPathComponent("mask.f32"))
+        } catch {
+            print("file self-test: staging failed \(error)")
+            return 1
+        }
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let request = WorkerRequest(
+            jobID: jobID.uuidString,
+            modelPath: model.path,
+            imagePath: directory.appendingPathComponent("image.f32").path,
+            maskPath: directory.appendingPathComponent("mask.f32").path,
+            outputPath: directory.appendingPathComponent("output.f32").path
+        )
+        do {
+            let response = try InferenceWorkerClient().run(request: request, jobDirectory: directory)
+            guard let outputPath = response.outputPath else { print("file self-test: no output"); return 1 }
+            let data = try Data(contentsOf: URL(fileURLWithPath: outputPath))
+            guard data.count == 3 * 512 * 512 * MemoryLayout<Float>.size else { print("file self-test: bad output"); return 1 }
+            var predicted = [Float](repeating: 0, count: 3 * 512 * 512)
+            _ = predicted.withUnsafeMutableBytes { data.copyBytes(to: $0) }
+            guard predicted.allSatisfy({ $0.isFinite }) else { print("file self-test: non-finite"); return 1 }
+            let result = try RetouchPreprocessor.composite(source: source, coverage: mask, predicted: predicted, rect: prepared.rect)
+            var outside = 0
+            var alpha = 0
+            for index in 0..<(width * height) where mask[index] == 0 {
+                let offset = index * 4
+                if Array(result.pixels[offset..<(offset + 4)]) != Array(source.pixels[offset..<(offset + 4)]) { outside += 1 }
+            }
+            for index in 0..<(width * height) where result.pixels[index * 4 + 3] != source.pixels[index * 4 + 3] { alpha += 1 }
+            let outputURL = url.deletingPathExtension().appendingPathExtension("native.png")
+            if let cg = result.cgImage(), let destination = CGImageDestinationCreateWithURL(outputURL as CFURL, UTType.png.identifier as CFString, 1, nil) {
+                CGImageDestinationAddImage(destination, cg, nil)
+                _ = CGImageDestinationFinalize(destination)
+            }
+            print("file self-test: source=\(width)x\(height) outside=\(outside) alpha=\(alpha) rect=\(prepared.rect.width)x\(prepared.rect.height) output=\(outputURL.path) load=\(response.loadSeconds ?? 0) predict=\(response.predictSeconds ?? 0)")
+            return outside == 0 && alpha == 0 ? 0 : 1
+        } catch {
+            print("file self-test: worker failed \(error)")
+            return 1
+        }
     }
 }
