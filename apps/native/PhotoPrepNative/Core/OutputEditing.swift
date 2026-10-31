@@ -161,7 +161,7 @@ public enum ExportWriter {
             : [:]
         CGImageDestinationAddImage(dest, cg, properties as CFDictionary)
         guard CGImageDestinationFinalize(dest) else { throw OutputEditingError.encode }
-        return data as Data
+        return stripMetadata(data as Data, format: format)
     }
 
     /// Write to a temp file in the target folder, fsync it, then publish with a
@@ -200,5 +200,56 @@ public enum ExportWriter {
 
     public static func writeExclusive(_ data: Data, to url: URL) throws -> Bool {
         try publish(data, to: url)
+    }
+    /// ImageIO adds a minimal EXIF/Photoshop container. Python exports clean
+    /// pixel data, so remove metadata segments before publication.
+    public static func stripMetadata(_ data: Data, format: ExportFormat) -> Data {
+        switch format {
+        case .png: return stripPNGMetadata(data)
+        case .jpeg: return stripJPEGMetadata(data)
+        }
+    }
+
+    private static func stripPNGMetadata(_ data: Data) -> Data {
+        let bytes = [UInt8](data)
+        guard bytes.count > 8, Array(bytes.prefix(8)) == [137,80,78,71,13,10,26,10] else { return data }
+        var out = Array(bytes.prefix(8)); var i = 8
+        let drop: Set<String> = ["eXIf", "iTXt", "tEXt", "zTXt", "tIME"]
+        while i + 12 <= bytes.count {
+            let length = Int(bytes[i]) << 24 | Int(bytes[i+1]) << 16 | Int(bytes[i+2]) << 8 | Int(bytes[i+3])
+            guard length >= 0, i + 12 + length <= bytes.count else { return data }
+            let type = String(bytes: bytes[(i+4)..<(i+8)], encoding: .ascii) ?? ""
+            let end = i + 12 + length
+            if !drop.contains(type) { out.append(contentsOf: bytes[i..<end]) }
+            i = end
+            if type == "IEND" { break }
+        }
+        return Data(out)
+    }
+
+    private static func stripJPEGMetadata(_ data: Data) -> Data {
+        let bytes = [UInt8](data)
+        guard bytes.count > 4, bytes[0] == 0xFF, bytes[1] == 0xD8 else { return data }
+        var out = [UInt8]([0xFF,0xD8]); var i = 2
+        while i + 3 < bytes.count {
+            guard bytes[i] == 0xFF else { return data }
+            let marker = bytes[i+1]
+            if marker == 0xDA { // SOS: copy entropy-coded data verbatim
+                out.append(contentsOf: bytes[i..<bytes.count]); return Data(out)
+            }
+            if marker == 0xD9 { out.append(contentsOf: bytes[i..<bytes.count]); return Data(out) }
+            if marker == 0x00 || marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7) {
+                out.append(contentsOf: [0xFF, marker]); i += 2; continue
+            }
+            let length = Int(bytes[i+2]) << 8 | Int(bytes[i+3])
+            guard length >= 2, i + 2 + length <= bytes.count else { return data }
+            let end = i + 2 + length
+            // APP1 (EXIF/XMP), APP13 (Photoshop/IPTC), COM comments: drop.
+            if marker != 0xE1 && marker != 0xED && marker != 0xFE {
+                out.append(contentsOf: bytes[i..<end])
+            }
+            i = end
+        }
+        return Data(out)
     }
 }

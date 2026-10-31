@@ -66,6 +66,10 @@ final class OutputEditingTests: XCTestCase {
         XCTAssertGreaterThan(png.count, 8)
         let jpg = try ExportWriter.encode(source, format: .jpeg)
         XCTAssertGreaterThan(jpg.count, 8)
+        XCTAssertFalse(String(data: png, encoding: .isoLatin1)?.contains("Exif") ?? false)
+        XCTAssertFalse(String(data: png, encoding: .isoLatin1)?.contains("eXIf") ?? false)
+        let jbytes = [UInt8](jpg)
+        XCTAssertFalse((0..<(max(0,jbytes.count-1))).contains { jbytes[$0] == 0xFF && jbytes[$0+1] == 0xE1 })
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: dir) }
