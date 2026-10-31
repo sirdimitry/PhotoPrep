@@ -270,9 +270,9 @@ public enum RetouchPreprocessor {
                 for x in 0..<resolution {
                     let sx = (Double(x) + 0.5) * Double(rect.width) / Double(resolution) - 0.5
                     for channel in 0..<3 {
-                        image[channel * resolution * resolution + y * resolution + x] = Float(
-                            bilinear(source: source, x: sx + Double(rect.x), y: sy + Double(rect.y), channel: channel, rect: rect) / 255.0
-                        )
+                        let scaled = bilinear(source: source, x: sx + Double(rect.x), y: sy + Double(rect.y), channel: channel, rect: rect)
+                        let byte = UInt8(min(255, max(0, Int(scaled.rounded(.toNearestOrEven)))))
+                        image[channel * resolution * resolution + y * resolution + x] = Float(byte) / 255.0
                     }
                 }
             }
@@ -285,9 +285,9 @@ public enum RetouchPreprocessor {
                 for x in 0..<resolution {
                     let sx = (Double(x) + 0.5) * Double(rect.width) / Double(resolution) - 0.5
                     for channel in 0..<3 {
-                        image[channel * resolution * resolution + y * resolution + x] = Float(
-                            bilinear(source: source, x: sx + Double(rect.x), y: sy + Double(rect.y), channel: channel, rect: rect) / 255.0
-                        )
+                        let scaled = bilinear(source: source, x: sx + Double(rect.x), y: sy + Double(rect.y), channel: channel, rect: rect)
+                        let byte = UInt8(min(255, max(0, Int(scaled.rounded(.toNearestOrEven)))))
+                        image[channel * resolution * resolution + y * resolution + x] = Float(byte) / 255.0
                     }
                     let gray = bilinearGray(source: source, mask: mask, x: sx + Double(rect.x), y: sy + Double(rect.y), rect: rect)
                     mask512[y * resolution + x] = gray > 0 ? 1 : 0

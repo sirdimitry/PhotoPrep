@@ -168,4 +168,67 @@ final class RetouchTests: XCTestCase {
         let second = try SourceIdentity.capture(url)
         XCTAssertNotEqual(first.sha256, second.sha256)
     }
+
+    private func gradientSource(width: Int, height: Int) -> StraightImage {
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        for y in 0..<height {
+            for x in 0..<width {
+                let i = (y * width + x) * 4
+                pixels[i] = UInt8((x * 255) / max(1, width - 1))
+                pixels[i + 1] = UInt8((y * 255) / max(1, height - 1))
+                pixels[i + 2] = UInt8(((x + y) * 255) / max(1, width + height - 2))
+                pixels[i + 3] = 255
+            }
+        }
+        return StraightImage(width: width, height: height, pixels: pixels)
+    }
+
+    private func edgeMask(width: Int, height: Int) -> [UInt8] {
+        var mask = [UInt8](repeating: 0, count: width * height)
+        for y in 0..<height {
+            for x in 0..<width where x < 4 || y < 4 || x >= width - 4 || y >= height - 4 {
+                mask[y * width + x] = 255
+            }
+        }
+        return mask
+    }
+
+    func testUpscaleRoundsRGBTo8Bit() throws {
+        let source = gradientSource(width: 16, height: 12)
+        let mask = edgeMask(width: 16, height: 12)
+        let prepared = try RetouchPreprocessor.prepare(source: source, mask: mask)
+        for value in prepared.image {
+            let byte = Double(value) * 255.0
+            XCTAssertEqual(byte, byte.rounded(), accuracy: 0.0001)
+        }
+        XCTAssertTrue(prepared.image.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 })
+    }
+
+    func testMixedScaleKeepsEdgesAndOutside() throws {
+        let source = gradientSource(width: 900, height: 300)
+        let mask = edgeMask(width: 900, height: 300)
+        let prepared = try RetouchPreprocessor.prepare(source: source, mask: mask)
+        XCTAssertTrue(prepared.image.allSatisfy { $0.isFinite })
+        XCTAssertTrue(prepared.mask.allSatisfy { $0 == 0 || $0 == 1 })
+        let result = try RetouchPreprocessor.composite(source: source, coverage: mask,
+                                                       predicted: [Float](repeating: 100, count: 3 * 512 * 512),
+                                                       rect: prepared.rect)
+        for i in 0..<(900 * 300) where mask[i] == 0 {
+            let offset = i * 4
+            XCTAssertEqual(Array(result.pixels[offset..<(offset + 4)]), Array(source.pixels[offset..<(offset + 4)]))
+        }
+        for i in 0..<(900 * 300) {
+            XCTAssertEqual(result.pixels[i * 4 + 3], source.pixels[i * 4 + 3])
+        }
+    }
+
+    func testDownscaleBoundaries() throws {
+        let source = gradientSource(width: 1200, height: 800)
+        let mask = edgeMask(width: 1200, height: 800)
+        let prepared = try RetouchPreprocessor.prepare(source: source, mask: mask)
+        XCTAssertTrue(prepared.image.allSatisfy { $0.isFinite })
+        XCTAssertTrue(prepared.mask.allSatisfy { $0 == 0 || $0 == 1 })
+        XCTAssertEqual(prepared.rect.width, 1200)
+        XCTAssertEqual(prepared.rect.height, 800)
+    }
 }
