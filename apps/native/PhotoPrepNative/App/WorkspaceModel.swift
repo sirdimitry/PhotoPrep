@@ -185,6 +185,7 @@ final class WorkspaceModel: ObservableObject {
     @Published private(set) var sourceNeedsDecision = false
     @Published private(set) var sessionOutputWidth = 1136
     @Published private(set) var sessionOutputHeight = 710
+    @Published private(set) var isDirty = false
     private var sessionURL: URL?
     private var sessionTask: Task<Void, Never>?
     private var sessionGeneration = UUID()
@@ -212,7 +213,10 @@ final class WorkspaceModel: ObservableObject {
     private var restoreTask: Task<Void, Never>?
     private var pressureSource: DispatchSourceMemoryPressure?
 
+    static weak var current: WorkspaceModel?
+
     init() {
+        Self.current = self
         let source = DispatchSource.makeMemoryPressureSource(eventMask: [.normal, .warning, .critical], queue: .main)
         source.setEventHandler { [weak self] in
             guard let self else { return }
@@ -250,33 +254,22 @@ final class WorkspaceModel: ObservableObject {
     func openSessionPanel() {
         guard !busy, pressure == .normal else { return }
         let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
-        panel.message = "Выберите папку с набором .photoprep.json и его фотографиями."
-        panel.prompt = "Открыть"
+        panel.allowedContentTypes = [.json]
         #if DEBUG
         if let directory = DebugLaunchOptions.panelDirectory { panel.directoryURL = directory }
         #endif
         panel.begin { [weak self] response in
-            guard response == .OK, let folder = panel.url else { return }
+            guard response == .OK, let url = panel.url else { return }
             Task { @MainActor [weak self] in
-                guard let self, self.confirmDiscardIfNeeded("Открытие другого набора") else { return }
-                let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
-                let sessions = files.filter { $0.lastPathComponent.lowercased().hasSuffix(".photoprep.json") }
-                    .sorted { $0.lastPathComponent < $1.lastPathComponent }
-                guard let session = sessions.first else {
-                    self.retouchError = "session_not_found"
-                    return
+                guard let self else { return }
+                switch self.confirmUnsaved("Открытие другого набора") {
+                case .discard: self.openSession(url)
+                case .save: self.saveSessionPanel()
+                case .cancel: return
                 }
-                let accessed = folder.startAccessingSecurityScopedResource()
-                NSLog("Session folder access %@ = %@", folder.path, accessed ? "yes" : "no")
-                if accessed {
-                    self.sessionScope?.stopAccessingSecurityScopedResource()
-                    self.sessionScope = folder
-                    self.authorizedSessionFolders.insert(folder.path)
-                }
-                self.openSession(session)
             }
         }
     }
@@ -294,22 +287,27 @@ final class WorkspaceModel: ObservableObject {
             if !url.lastPathComponent.lowercased().hasSuffix(".photoprep.json") {
                 url = url.deletingPathExtension().appendingPathExtension("photoprep.json")
             }
-            Task { @MainActor [weak self] in self?.saveSession(to: url) }
+            Task { @MainActor [weak self] in await self?.saveSession(to: url) }
         }
     }
 
-    var hasUnsavedEdits: Bool {
-        editStates.values.contains { !$0.passes.isEmpty || !$0.mask.isEmpty }
-    }
+    var hasUnsavedEdits: Bool { isDirty }
 
-    func confirmDiscardIfNeeded(_ action: String) -> Bool {
-        guard hasUnsavedEdits else { return true }
+    enum UnsavedDecision { case save, discard, cancel }
+
+    func confirmUnsaved(_ action: String) -> UnsavedDecision {
+        guard isDirty else { return .discard }
         let alert = NSAlert()
         alert.messageText = "Несохранённые правки"
-        alert.informativeText = "\(action) удалит маски/проходы, которые ещё не сохранены в набор. Продолжить?"
-        alert.addButton(withTitle: "Продолжить")
+        alert.informativeText = "\(action): сохранить изменения перед продолжением?"
+        alert.addButton(withTitle: "Сохранить")
+        alert.addButton(withTitle: "Не сохранять")
         alert.addButton(withTitle: "Отмена")
-        return alert.runModal() == .alertFirstButtonReturn
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return .save
+        case .alertSecondButtonReturn: return .discard
+        default: return .cancel
+        }
     }
 
     func openSession(_ url: URL) {
@@ -321,7 +319,9 @@ final class WorkspaceModel: ObservableObject {
         sessionTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let document = try SessionCodec.load(url)
+                let document = try await Task.detached(priority: .userInitiated) {
+                    try SessionCodec.load(url)
+                }.value
                 NSLog("E1.5 session decoded photos=%d output=%dx%d", document.photos.count, document.outputWidth, document.outputHeight)
                 try Task.checkCancellation()
                 var headers: [PhotoHeader] = []
@@ -336,10 +336,15 @@ final class WorkspaceModel: ObservableObject {
                 }
                 NSLog("E1.5 session headers=%d", headers.count)
                 guard token == self.sessionGeneration, !Task.isCancelled else { return }
-                if headers.count < document.photos.count,
-                   !self.authorizedSessionFolders.contains(url.deletingLastPathComponent().path) {
+                if headers.count < document.photos.count {
+                    if !self.authorizedSessionFolders.contains(url.deletingLastPathComponent().path) {
+                        self.sessionTask = nil
+                        self.requestSessionFolderAccess(for: url, token: token)
+                        return
+                    }
                     self.sessionTask = nil
-                    self.requestSessionFolderAccess(for: url, token: token)
+                    self.retouchError = "session_incomplete"
+                    NSLog("E1.5 session incomplete: %d of %d photos accessible", headers.count, document.photos.count)
                     return
                 }
                 self.cancelImport()
@@ -369,6 +374,7 @@ final class WorkspaceModel: ObservableObject {
                 } else {
                     self.selected = headers.first?.url
                 }
+                self.isDirty = false
                 if document.readOnly {
                     self.retouchError = "session_read_only"
                     self.sessionReadOnly = document.readOnlyReason
@@ -384,7 +390,7 @@ final class WorkspaceModel: ObservableObject {
         }
     }
 
-    func saveSession(to url: URL) {
+    func saveSession(to url: URL) async {
         guard sessionReadOnly == nil, !sourceNeedsDecision else {
             retouchError = "session_read_only"
             return
@@ -397,11 +403,20 @@ final class WorkspaceModel: ObservableObject {
                                 passes: state.passes.map { SessionPass(strokes: $0.strokes, modelID: $0.modelID) },
                                 crop: state.crop, logo: state.logo)
         }
-        do {
-            try SessionCodec.save(workspace, to: url)
+        let result = await Task.detached(priority: .userInitiated) { () -> Result<Void, Error> in
+            do {
+                try SessionCodec.save(workspace, to: url)
+                return .success(())
+            } catch {
+                return .failure(error)
+            }
+        }.value
+        switch result {
+        case .success:
             sessionURL = url
+            isDirty = false
             retouchError = nil
-        } catch {
+        case .failure(let error):
             retouchError = (error as? SessionError)?.code ?? "session_save_failed"
         }
     }
@@ -472,7 +487,9 @@ final class WorkspaceModel: ObservableObject {
             }
             guard let self, !Task.isCancelled, token == self.importGeneration else { return }
             var known = Set(self.photos.map(\.url))
-            self.photos += added.filter { known.insert($0.url).inserted }
+            let fresh = added.filter { known.insert($0.url).inserted }
+            self.photos += fresh
+            if !fresh.isEmpty { self.isDirty = true }
             self.importBusy = false
             self.importTask = nil
             self.issue = failure
@@ -554,8 +571,11 @@ final class WorkspaceModel: ObservableObject {
     }
 
     func newCollection() {
-        guard confirmDiscardIfNeeded("Новая коллекция") else { return }
-        clear()
+        switch confirmUnsaved("Новая коллекция") {
+        case .discard: clear()
+        case .save: saveSessionPanel()
+        case .cancel: return
+        }
     }
 
     func suspend() {
@@ -587,6 +607,7 @@ final class WorkspaceModel: ObservableObject {
         maskRevision += 1
         editRevision += 1
         if let selected { editStates[selected, default: PhotoEditState()].mask = strokes }
+        isDirty = true
         showingAfter = false
         retouchError = nil
     }
@@ -597,6 +618,7 @@ final class WorkspaceModel: ObservableObject {
         maskRevision += 1
         editRevision += 1
         if let selected { editStates[selected, default: PhotoEditState()].mask = strokes }
+        isDirty = true
         showingAfter = false
         retouchError = nil
     }
@@ -607,6 +629,7 @@ final class WorkspaceModel: ObservableObject {
         maskRevision += 1
         editRevision += 1
         if let selected { editStates[selected, default: PhotoEditState()].mask = [] }
+        isDirty = true
         showingAfter = false
         retouchError = nil
     }
@@ -763,6 +786,7 @@ final class WorkspaceModel: ObservableObject {
                 self.cacheBytes = self.pixelCache.bytes
                 self.syncCurrentResultWithCache()
                 self.passCount = state.passes.count
+                self.isDirty = true
                 self.strokes = []
                 self.maskRevision += 1
                 self.editRevision += 1
@@ -837,6 +861,7 @@ final class WorkspaceModel: ObservableObject {
         }
         showingAfter = false
         retouchError = nil
+        isDirty = true
         cacheBytes = pixelCache.bytes
         if resultImage == nil && !state.passes.isEmpty { startRestoreIfNeeded() }
     }
@@ -862,6 +887,7 @@ final class WorkspaceModel: ObservableObject {
             state.sourceChanged = false
             self.editStates[url] = state
             self.sourceNeedsDecision = false
+            self.isDirty = true
             self.pixelCache.clear()
             self.cacheBytes = 0
             self.resultImage = nil
@@ -879,6 +905,7 @@ final class WorkspaceModel: ObservableObject {
         state.sourceChanged = false
         editStates[url] = state
         sourceNeedsDecision = false
+        isDirty = true
         strokes = []
         passCount = 0
         resultImage = nil
@@ -1231,7 +1258,7 @@ final class WorkspaceModel: ObservableObject {
         let selectedURL = selected
         let loadedView = selectedURL.flatMap { editStates[$0]?.view } ?? SessionView()
         let out = url.deletingLastPathComponent().appendingPathComponent("native-state-out.photoprep.json")
-        saveSession(to: out)
+        await saveSession(to: out)
         let saved = (try? SessionCodec.load(out))
         let report: [String: Any] = [
             "loadedWidth": loadedWidth, "loadedHeight": loadedHeight,
@@ -1266,7 +1293,7 @@ final class WorkspaceModel: ObservableObject {
         }
         let session = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("PhotoPrep Native/e1.4-reopen.photoprep.json")
-        saveSession(to: session)
+        await saveSession(to: session)
         let saveError = retouchError
         clear()
         openSession(session)

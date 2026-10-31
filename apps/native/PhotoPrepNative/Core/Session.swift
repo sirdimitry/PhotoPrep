@@ -95,9 +95,9 @@ public enum SessionCodec {
             guard seen.insert(file.path).inserted else { continue }
             var photo = SessionPhoto(url: file)
             photo.sourceMissing = !FileManager.default.fileExists(atPath: file.path)
-            if photo.sourceMissing { skipped += 1; continue }
+            if photo.sourceMissing { skipped += 1 }
             photo.view = parseView(entry["view"])
-            if version >= 2, let rawEdits = entry["edits"] {
+            if version >= 2, let rawEdits = entry["edits"], !(rawEdits is NSNull) {
                 guard let edits = rawEdits as? [String: Any] else { throw SessionError("session_invalid") }
                 let parsed = try parseEdits(edits, totalPoints: &totalPoints)
                 photo.mask = parsed.mask
@@ -110,7 +110,10 @@ public enum SessionCodec {
             }
             photos.append(photo)
         }
-        let selectedPath = (object["selected"] as? String).map { parent.appendingPathComponent($0).standardizedFileURL }
+        let selectedPath = (object["selected"] as? String).map { raw -> URL in
+            raw.hasPrefix("/") ? URL(fileURLWithPath: raw).standardizedFileURL
+                : parent.appendingPathComponent(raw).standardizedFileURL
+        }
         let selected = photos.first(where: { $0.url == selectedPath })?.url ?? photos.first?.url
         return SessionWorkspace(version: version, photos: photos, selected: selected,
                                 outputWidth: output[0], outputHeight: output[1],
@@ -122,6 +125,7 @@ public enum SessionCodec {
         guard workspace.photos.count <= maxPhotos else { throw SessionError("session_too_large") }
         var points = 0
         for photo in workspace.photos {
+            guard !photo.sourceMissing else { throw SessionError("session_incomplete") }
             guard photo.crop == nil, photo.logo == nil else { throw SessionError("session_read_only") }
             guard photo.passes.count <= maxPasses,
                   photo.passes.allSatisfy({ $0.modelID == "lama" }) else {

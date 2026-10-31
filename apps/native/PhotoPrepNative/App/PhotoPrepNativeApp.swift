@@ -24,6 +24,20 @@ enum DebugLaunchOptions {
 }
 #endif
 
+@MainActor
+final class PhotoPrepAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let workspace = WorkspaceModel.current else { return .terminateNow }
+        switch workspace.confirmUnsaved("Завершение приложения") {
+        case .discard: return .terminateNow
+        case .cancel: return .terminateCancel
+        case .save:
+            workspace.saveSessionPanel()
+            return .terminateCancel
+        }
+    }
+}
+
 @main
 struct PhotoPrepMain {
     static func main() {
@@ -74,6 +88,7 @@ struct PhotoPrepMain {
 }
 
 struct PhotoPrepNativeApp: App {
+    @NSApplicationDelegateAdaptor(PhotoPrepAppDelegate.self) private var appDelegate
     @StateObject private var workspace = WorkspaceModel()
     @AppStorage("ui/language", store: NativeIdentity.preferences) private var language = "ru"
     @AppStorage("ui/appearance", store: NativeIdentity.preferences) private var appearance = "dark"

@@ -132,4 +132,30 @@ final class SessionTests: XCTestCase {
         XCTAssertTrue(loaded.photos[0].passes.isEmpty)
     }
 
+    func testEditsNullAndAbsoluteSelected() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false)
+        let photo = dir.appendingPathComponent("p.png")
+        try Data("x".utf8).write(to: photo)
+        let raw = #"{"format":"PhotoPrep","version":2,"selected":"\#(photo.path)","photos":[{"path":"\#(photo.path)","edits":null}]}"#
+        let url = dir.appendingPathComponent("abs.photoprep.json")
+        try Data(raw.utf8).write(to: url)
+        let loaded = try SessionCodec.load(url)
+        XCTAssertEqual(loaded.photos.count, 1)
+        XCTAssertEqual(loaded.selected?.standardizedFileURL, photo.standardizedFileURL)
+        XCTAssertTrue(loaded.photos[0].mask.isEmpty)
+    }
+
+    func testMissingPhotoIsKeptAndBlocksSave() throws {
+        let url = try fixture(2, edits: #"{"strokes":[]}"#)
+        try FileManager.default.removeItem(at: url.deletingLastPathComponent().appendingPathComponent("photo.png"))
+        let loaded = try SessionCodec.load(url)
+        XCTAssertEqual(loaded.photos.count, 1)
+        XCTAssertTrue(loaded.photos[0].sourceMissing)
+        XCTAssertEqual(loaded.skipped, 1)
+        XCTAssertThrowsError(try SessionCodec.save(loaded, to: url)) { error in
+            XCTAssertEqual((error as? SessionError)?.code, "session_incomplete")
+        }
+    }
+
 }
