@@ -204,6 +204,15 @@ struct RetouchPanel: View {
                           "Before/After: turn off to see the original."))
                     .font(.caption2).foregroundStyle(.secondary)
             }
+            if model.sourceNeedsDecision {
+                Text(text("Исходник изменился. Рецепты сохранены; выберите действие.",
+                          "The source changed. Recipes are preserved; choose an action."))
+                    .font(.caption).foregroundStyle(.orange)
+                HStack {
+                    Button(text("Принять новый исходник", "Rebase source")) { model.rebaseSource() }
+                    Button(text("Сбросить рецепты", "Reset recipes")) { model.resetEdits() }
+                }.font(.caption)
+            }
             if let error = model.retouchError {
                 Text(message(error)).font(.caption).foregroundStyle(.orange)
             }

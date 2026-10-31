@@ -76,4 +76,60 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: url), original)
     }
 
+    func testMissingStrokesStillParsesPassesAndLogo() throws {
+        let url = try fixture(3, edits: #"{"passes":[[{"points":[[0.5,0.5]],"width":0.2}]],"pass_models":["lama"]}"#)
+        let loaded = try SessionCodec.load(url)
+        XCTAssertTrue(loaded.photos[0].mask.isEmpty)
+        XCTAssertEqual(loaded.photos[0].passes.count, 1)
+    }
+
+    func testInvalidFieldTypesAreRejected() throws {
+        let cases = [
+            #"{"strokes":{},"passes":[]}"#,
+            #"{"strokes":[],"passes":{},"pass_models":[]}"#,
+            #"{"strokes":[],"passes":[[{"points":[[0.5,0.5]],"width":0.2}]],"pass_models":"lama"}"#,
+            #"{"strokes":[{"points":[[0.5,0.5]],"width":0.2,"erase":1}]}"#,
+            #"{"strokes":[],"crop":"bad"}"#,
+            #"{"strokes":[],"logo":{"path":1}}"#,
+        ]
+        for edits in cases {
+            let url = try fixture(3, edits: edits)
+            XCTAssertThrowsError(try SessionCodec.load(url), edits)
+        }
+    }
+
+    func testVersionAndOutputMustBeIntegers() throws {
+        for version in ["true", "2.5", "\"2\""] {
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false)
+            try Data("x".utf8).write(to: dir.appendingPathComponent("photo.png"))
+            let raw = #"{"format":"PhotoPrep","version":\#(version),"photos":[{"path":"photo.png"}]}"#
+            let url = dir.appendingPathComponent("bad.photoprep.json")
+            try Data(raw.utf8).write(to: url)
+            XCTAssertThrowsError(try SessionCodec.load(url), version)
+        }
+    }
+
+    func testOutputSizeAndViewSurviveSave() throws {
+        let url = try fixture(2, edits: #"{"strokes":[]}"#)
+        var workspace = try SessionCodec.load(url)
+        workspace.outputWidth = 999
+        workspace.outputHeight = 777
+        workspace.photos[0].view = SessionView(fit: false, zoom: 3.25, centerX: 0.2, centerY: 0.8)
+        let out = url.deletingLastPathComponent().appendingPathComponent("saved.photoprep.json")
+        try SessionCodec.save(workspace, to: out)
+        let loaded = try SessionCodec.load(out)
+        XCTAssertEqual(loaded.outputWidth, 999)
+        XCTAssertEqual(loaded.outputHeight, 777)
+        XCTAssertEqual(loaded.photos[0].view, SessionView(fit: false, zoom: 3.25, centerX: 0.2, centerY: 0.8))
+    }
+
+    func testPythonNullAndEmptyCollectionsAreAccepted() throws {
+        let url = try fixture(3, edits: #"{"strokes":[],"passes":[],"pass_models":[],"crop":null,"logo":null}"#)
+        let loaded = try SessionCodec.load(url)
+        XCTAssertFalse(loaded.readOnly)
+        XCTAssertTrue(loaded.photos[0].mask.isEmpty)
+        XCTAssertTrue(loaded.photos[0].passes.isEmpty)
+    }
+
 }

@@ -94,7 +94,7 @@ struct PhotoPrepNativeApp: App {
             CommandGroup(replacing: .newItem) {
                 Button(language == "ru" ? "Открыть фотографии…" : "Open Photos…") { workspace.importPhotos() }
                     .keyboardShortcut("o").disabled(workspace.busy || workspace.pressure != .normal)
-                Button(language == "ru" ? "Новая коллекция" : "New Collection") { workspace.clear() }
+                Button(language == "ru" ? "Новая коллекция" : "New Collection") { workspace.newCollection() }
                     .keyboardShortcut("n")
                 Divider()
                 Button(language == "ru" ? "Открыть набор…" : "Open Workspace…") { workspace.openSessionPanel() }
@@ -192,6 +192,7 @@ private struct WorkspaceView: View {
                 }
             }.font(.caption).padding(12)
         }
+        .background(WindowCloseGuardView(workspace: model))
         .toolbar {
             Button { model.importPhotos() } label: {
                 Label(text("Открыть фотографии", "Open Photos"), systemImage: "plus")
