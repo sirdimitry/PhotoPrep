@@ -817,6 +817,14 @@ final class WorkspaceModel: ObservableObject {
         // Undo last pass must return its mask for refinement.
         undoLastPass()
         let undoKeptOne = passCount == 1 && !strokes.isEmpty
+        let mask3 = [MaskStroke(points: [MaskPoint(x: 0.1, y: 0.5), MaskPoint(x: 0.3, y: 0.5)], width: 0.1)]
+        setHistoryMask(mask3)
+        let passesBeforeCancel = passCount
+        processMask()
+        try? await Task.sleep(for: .milliseconds(100))
+        cancelRetouch()
+        await waitWhileBusy("history cancel")
+        let cancelKeptMask = !strokes.isEmpty && passCount == passesBeforeCancel
         let report: [String: Any] = [
             "pass1": true, "pass2": true, "outsideSame": outsideSame,
             "clearKeptResult": clearKeptResult, "toggleKeptRecipe": toggleKeptRecipe,
@@ -829,6 +837,7 @@ final class WorkspaceModel: ObservableObject {
               outsideSame ? "yes" : "no", clearKeptResult ? "yes" : "no",
               toggleKeptRecipe ? "yes" : "no", replayRestored ? "yes" : "no",
               switchKept ? "yes" : "no", undoKeptOne ? "yes" : "no")
+        NSLog("E1.3 history cancel mask kept=\(cancelKeptMask ? "yes" : "no")")
         NSApplication.shared.terminate(nil)
     }
 
