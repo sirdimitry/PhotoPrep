@@ -1,11 +1,12 @@
 # PhotoPrep Native — текущий статус
 
-31.10.2026, branch `e1.4/history-sessions`, base E1.3 `db937c3` (E0 `101f6bf`).
+31.10.2026, branch `e1.5/session-integrity`, base E1.4 `cfaa6ce` (E0 `101f6bf`).
 Исторические отчёты не переписаны: [E0-LAMA-COREML.md](E0-LAMA-COREML.md),
 [E1-LAMA-WORKER.md](E1-LAMA-WORKER.md), [E1.1-QUALITY-STABILITY.md](E1.1-QUALITY-STABILITY.md),
 [E1.2-ACCEPTANCE.md](E1.2-ACCEPTANCE.md),
 [E1.3-QUALITY-HISTORY.md](E1.3-QUALITY-HISTORY.md),
-[E1.4-HISTORY-SESSIONS.md](E1.4-HISTORY-SESSIONS.md), [REFERENCE-RESULTS.md](REFERENCE-RESULTS.md).
+[E1.4-HISTORY-SESSIONS.md](E1.4-HISTORY-SESSIONS.md),
+[E1.5-SESSION-INTEGRITY.md](E1.5-SESSION-INTEGRITY.md), [REFERENCE-RESULTS.md](REFERENCE-RESULTS.md).
 
 ## Реально работает
 
@@ -88,6 +89,14 @@
   mode 0600; crop/logo/unsupported models read-only, no overwrite; Python→Native
   →Python fixtures pass; reopen replay pixelsEqual=true. 24 Swift tests.
 
+* **E1.5 session integrity.** output_size/view/masks/passes/modelID сохраняются
+  через app state; crop/logo/MI-GAN/SDXL хранятся как read-only и не пишутся;
+  source change сохраняет рецепты; strict Python validation; async cancel;
+  session generation; read-write entitlement + folder scope; close guard.
+* **E1.5 tests.** 29 Swift tests; app session-state 999×777/view yes; Python
+  fixtures 1–7; reopen replay pixelsEqual. Real session UI open/save/reopen
+  заблокирован memory pressure warning и не принят.
+
 ## Проверено
 
 * 16 Swift tests: preview, policy, CMYK reject, hidden RGB/alpha, mask
@@ -122,7 +131,8 @@
   brick и 2 Мп big-context; blind 100/200% независимая оценка не выполнена.
 * Нет crop/logo/export/session/MI-GAN/SDXL/FP16/quantization.
 * Sessions save UI не пройден вручную; core/CLI/Python fixtures проверены.
-  Interrupted save проверен как no-overwrite, не kill посреди rename.
+  Реальный UI open/save/reopen сессии остановлен memory pressure; нужен чистый
+  normal-pressure прогон. Interrupted save проверен как no-overwrite, не kill.
 * Replay+switch/cancel одновременно и несколько больших фото с eviction не
   прогнаны полностью; cache 384 MiB, 40 Мп результат 160 MB.
 * Worker — self-exec Process, не XPC service; sandbox наследуется, crash-домен
