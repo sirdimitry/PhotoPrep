@@ -1,13 +1,12 @@
 # PhotoPrep Native
 
-SwiftUI macOS application, **development foundation only**. No Native release or
-Core ML retouch engine is available yet. The working Python application remains
-in [../python/](../python/), unchanged by this foundation.
-
-29.10.2026: Xcode project, distinct app identity, RU/EN, dark/light themes, file
-import and bounded ImageIO preview. [Current status and limits](STATUS.md).
-The primary quality candidate is LaMa; model quality is evaluated separately from
-speed and binary size. [Measured Python reference](REFERENCE-RESULTS.md).
+SwiftUI macOS application with a **limited native LaMa E1 slice**. It has a
+straight-RGBA canvas (brush/eraser/undo), one LaMa FP32 pass in a separate
+self-exec worker, before/after, progress/cancel/timeout, and exact outside-mask /
+alpha preservation. It is not a release and has not passed the real-photo UI
+acceptance yet. The working Python application remains in [../python/](../python/).
+[Current status and limits](STATUS.md), [E1 report](E1-LAMA-WORKER.md), and
+[E0 conversion/parity report](E0-LAMA-COREML.md).
 
 ## Build and test
 
@@ -16,11 +15,33 @@ Use the installed Xcode via a per-command DEVELOPER_DIR if necessary; do not cha
 the user's global toolchain. From the repository root:
 
 ```bash
-swift test --package-path apps/native --scratch-path work/native-tests
-xcodebuild -project apps/native/PhotoPrepNative.xcodeproj -scheme PhotoPrepNative \
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  swift test --package-path apps/native --scratch-path work/native-tests
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  xcodebuild -project apps/native/PhotoPrepNative.xcodeproj -scheme PhotoPrepNative \
   -configuration Debug -destination 'platform=macOS,arch=arm64' \
-  -derivedDataPath work/native-build build
+  -derivedDataPath work/native-build build CODE_SIGNING_ALLOWED=NO
 ```
+
+The app target has a build phase that copies the compiled model from
+`PHOTOPREP_LAMA_MODEL` or, by default, from
+`../../../e0-data/work/e0/models/LaMa-fp32.mlmodelc` into
+`Contents/Resources/Models/LaMa-fp32.mlmodelc`. The model is not in Git; without
+it the app builds but reports `model_missing` at retouch time. The build script
+is not a sandbox bypass of the running app: App Sandbox remains enabled for the
+app and its self-exec worker.
+
+End-to-end diagnostics (signed ad-hoc app; no Python):
+
+```bash
+"PhotoPrep Native.app/Contents/MacOS/PhotoPrep Native" --photoprep-e1-selftest
+"PhotoPrep Native.app/Contents/MacOS/PhotoPrep Native" --photoprep-e1-timeout-selftest
+"PhotoPrep Native.app/Contents/MacOS/PhotoPrep Native" --photoprep-e1-crash-selftest
+"PhotoPrep Native.app/Contents/MacOS/PhotoPrep Native" --photoprep-e1-cancel-selftest
+```
+
+Use `PHOTOPREP_E1_WIDTH` / `PHOTOPREP_E1_HEIGHT` to exercise 1024×768,
+4000×3000 and 8000×5000 synthetic sources.
 
 Development app: `work/native-build/Build/Products/Debug/PhotoPrep Native.app`.
 It is not installed over Python. The project uses ad-hoc development signing,
@@ -38,6 +59,8 @@ capabilities and their own verification.
 * [Verified Python behavior](BEHAVIOR.md)
 * [Quality and resource acceptance](QUALITY-SAFETY.md)
 * [Roadmap](ROADMAP.md)
+* [E1 worker/UI report](E1-LAMA-WORKER.md)
+* [E0 conversion/parity report](E0-LAMA-COREML.md)
 
 Core sources are also a Swift package for tests. The app builds the same files;
 it has no developer-Python runtime dependency. Python in Tools is exclusively for

@@ -158,6 +158,30 @@ load; compiled-model load alone is reported separately in the E0 report.
   --out-md <e0-data>/work/e0/results/summary.md
 ```
 
+## Strict E0 re-verification
+
+`verify_e0.py` fails closed: it checks the expected hashes of ONNX, checkpoint,
+config, source zip and the saved model **before** creating an ONNX session or
+Core ML model; then it validates tensor shapes, dtype, NaN/Infinity, the parity
+thresholds, and `changed_outside == 0` / `changed_alpha == 0` on the final
+composite.
+
+```bash
+<e0-venv>/bin/python apps/native/Tools/e0/verify_e0.py \
+  --onnx <models>/lama_fp32.onnx \
+  --checkpoint <e0-data>/big-lama/models/best.ckpt \
+  --config <e0-data>/big-lama/config.yaml \
+  --source-zip <e0-data>/src/carve_lama.zip \
+  --model <e0-data>/work/e0/models/LaMa-fp32.mlmodelc \
+  --fixtures <e0-data>/work/e0/fixtures \
+  --results <e0-data>/work/e0/results \
+  --out <e0-data>/work/e0/results/verify_e0.json
+```
+
+Actual result on 31.10.2026: 8/8 cases passed; worst tensor max `0.000664`,
+all outside/alpha changes zero; final max vs ONNX 1 LSB. Full values are in the
+E1 report.
+
 ## Acceptance scale and thresholds
 
 All model and composite comparisons use **8-bit code values 0..255**, not the
