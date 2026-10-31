@@ -107,6 +107,54 @@ final class RetouchTests: XCTestCase {
         XCTAssertTrue(decoded.pixels.enumerated().allSatisfy { $0.offset % 4 != 3 || $0.element == 255 })
     }
 
+    func testCMYKIsRejected() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("cmyk.jpg")
+        let context = try XCTUnwrap(CGContext(data: nil, width: 8, height: 8, bitsPerComponent: 8,
+                                             bytesPerRow: 0, space: CGColorSpaceCreateDeviceCMYK(),
+                                             bitmapInfo: CGImageAlphaInfo.none.rawValue))
+        let image = try XCTUnwrap(context.makeImage())
+        let writer = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(writer, image, nil)
+        XCTAssertTrue(CGImageDestinationFinalize(writer))
+        let decoder = StraightImageDecoder(
+            policy: ResourcePolicy(physicalBytes: 16 * 1024 * ResourcePolicy.mib),
+            memorySnapshot: { (100 * ResourcePolicy.mib, 8_192 * ResourcePolicy.mib) }
+        )
+        do {
+            _ = try await decoder.decode(url: url)
+            XCTFail("CMYK must be rejected")
+        } catch let failure as RetouchFailure {
+            XCTAssertEqual(failure, .unsupportedColorSpace)
+        }
+    }
+
+    func testCancellationStopsHeavyStages() throws {
+        let width = 32
+        let height = 24
+        var sourcePixels = [UInt8](repeating: 100, count: width * height * 4)
+        for index in 0..<(width * height) { sourcePixels[index * 4 + 3] = 255 }
+        let source = StraightImage(width: width, height: height, pixels: sourcePixels)
+        var coverage = [UInt8](repeating: 0, count: width * height)
+        for y in 8..<16 { for x in 8..<24 { coverage[y * width + x] = 255 } }
+        let flag = CancellationFlag()
+        flag.cancel()
+        XCTAssertThrowsError(try RetouchPreprocessor.prepare(source: source, mask: coverage, isCancelled: { flag.isCancelled })) {
+            XCTAssertEqual($0 as? RetouchFailure, .cancelled)
+        }
+        let rect = RetouchPreprocessor.contextRect(mask: coverage, width: width, height: height)!
+        XCTAssertThrowsError(try RetouchPreprocessor.composite(source: source, coverage: coverage,
+                                                               predicted: [Float](repeating: 0, count: 3 * 512 * 512),
+                                                               rect: rect, isCancelled: { flag.isCancelled })) {
+            XCTAssertEqual($0 as? RetouchFailure, .cancelled)
+        }
+        XCTAssertTrue(MaskRenderer.render(width: width, height: height,
+                                          strokes: [MaskStroke(points: [MaskPoint(x: 0.5, y: 0.5)], width: 0.2)],
+                                          isCancelled: { flag.isCancelled }).isEmpty)
+    }
+
     func testSourceIdentityChangesWhenBytesChange() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)

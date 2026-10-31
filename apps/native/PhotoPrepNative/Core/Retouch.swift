@@ -7,7 +7,10 @@ import CryptoKit
 public enum RetouchFailure: Error, Equatable, Sendable {
     case invalidImage
     case unsupportedPixelLayout
+    case unsupportedColorSpace
+    case unsupportedAlphaLayout
     case premultipliedAlpha
+    case bufferTooSmall
     case imageTooLarge
     case insufficientMemory
     case emptyMask
@@ -19,6 +22,25 @@ public enum RetouchFailure: Error, Equatable, Sendable {
     case workerFailed(String)
     case timeout
     case cancelled
+}
+
+public final class CancellationFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    public init() {}
+
+    public func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+    }
+
+    public var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
 }
 
 public struct SourceIdentity: Codable, Sendable, Equatable {
@@ -56,11 +78,13 @@ public struct StraightImage: Sendable, Equatable {
     public let width: Int
     public let height: Int
     public var pixels: [UInt8] // RGBA8, straight alpha, top-left origin
+    public let iccProfile: Data?
 
-    public init(width: Int, height: Int, pixels: [UInt8]) {
+    public init(width: Int, height: Int, pixels: [UInt8], iccProfile: Data? = nil) {
         self.width = width
         self.height = height
         self.pixels = pixels
+        self.iccProfile = iccProfile
     }
 
     public var byteCount: Int { pixels.count }
@@ -69,13 +93,14 @@ public struct StraightImage: Sendable, Equatable {
         let data = Data(pixels)
         guard let provider = CGDataProvider(data: data as CFData) else { return nil }
         let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue)
+        let space = iccProfile.flatMap { CGColorSpace(iccData: $0 as CFData) } ?? CGColorSpaceCreateDeviceRGB()
         return CGImage(
             width: width,
             height: height,
             bitsPerComponent: 8,
             bitsPerPixel: 32,
             bytesPerRow: width * 4,
-            space: CGColorSpaceCreateDeviceRGB(),
+            space: space,
             bitmapInfo: bitmapInfo,
             provider: provider,
             decode: nil,
@@ -111,8 +136,9 @@ public enum MaskRenderer {
     /// Renders a full-resolution grayscale mask, origin top-left, exactly like
     /// the Python/Qt mask contract: round caps/joins, antialiasing, ordered
     /// SourceOver strokes, and a filled circle for a single point.
-    public static func render(width: Int, height: Int, strokes: [MaskStroke]) -> [UInt8] {
+    public static func render(width: Int, height: Int, strokes: [MaskStroke], isCancelled: () -> Bool = { false }) -> [UInt8] {
         guard width > 0, height > 0, width * height <= 100_000_000 else { return [] }
+        if isCancelled() { return [] }
         var pixels = [UInt8](repeating: 0, count: width * height)
         let space = CGColorSpace(name: CGColorSpace.linearGray) ?? CGColorSpaceCreateDeviceGray()
         pixels.withUnsafeMutableBytes { raw in
@@ -131,6 +157,7 @@ public enum MaskRenderer {
             context.translateBy(x: 0, y: CGFloat(height))
             context.scaleBy(x: 1, y: -1)
             for stroke in strokes where !stroke.points.isEmpty {
+                if isCancelled() { return }
                 let lineWidth = max(1.0, stroke.width * Double(min(width, height)))
                 let gray: CGFloat = stroke.erase ? 0 : 1
                 context.setLineCap(.round)
@@ -213,29 +240,50 @@ public enum RetouchPreprocessor {
         )
     }
 
-    public static func prepare(source: StraightImage, mask: [UInt8]) throws -> PreparedInput {
+    public static func prepare(source: StraightImage, mask: [UInt8], isCancelled: () -> Bool = { false }) throws -> PreparedInput {
         guard source.width > 0, source.height > 0,
               source.pixels.count == source.width * source.height * 4,
               mask.count == source.width * source.height else {
             throw RetouchFailure.invalidImage
         }
+        if isCancelled() { throw RetouchFailure.cancelled }
         guard !MaskRenderer.isEmpty(mask),
               let rect = contextRect(mask: mask, width: source.width, height: source.height) else {
             throw RetouchFailure.emptyMask
         }
         var image = [Float](repeating: 0, count: 3 * resolution * resolution)
         var mask512 = [Float](repeating: 0, count: resolution * resolution)
-        for y in 0..<resolution {
-            let sy = (Double(y) + 0.5) * Double(rect.height) / Double(resolution) - 0.5
-            for x in 0..<resolution {
-                let sx = (Double(x) + 0.5) * Double(rect.width) / Double(resolution) - 0.5
-                for channel in 0..<3 {
-                    image[channel * resolution * resolution + y * resolution + x] = Float(
-                        bilinear(source: source, x: sx + Double(rect.x), y: sy + Double(rect.y), channel: channel) / 255.0
-                    )
+        if rect.width <= resolution && rect.height <= resolution {
+            // Qt's SmoothTransformation uses the Imlib2 fixed-point upscaler
+            // with 8-bit interpolation weights and truncation. Reproduce it
+            // exactly for the common 512-context case.
+            qtUpscale(source: source, mask: mask, rect: rect, image: &image, mask512: &mask512)
+            // QImage::scaled on RGBA8888 takes the QPainter path (bilinear),
+            // not the Imlib2 upscaler; keep the measured bilinear path for RGB.
+            for y in 0..<resolution {
+                let sy = (Double(y) + 0.5) * Double(rect.height) / Double(resolution) - 0.5
+                for x in 0..<resolution {
+                    let sx = (Double(x) + 0.5) * Double(rect.width) / Double(resolution) - 0.5
+                    for channel in 0..<3 {
+                        image[channel * resolution * resolution + y * resolution + x] = Float(
+                            bilinear(source: source, x: sx + Double(rect.x), y: sy + Double(rect.y), channel: channel, rect: rect) / 255.0
+                        )
+                    }
                 }
-                let gray = bilinearGray(source: source, mask: mask, x: sx + Double(rect.x), y: sy + Double(rect.y))
-                mask512[y * resolution + x] = gray > 0 ? 1 : 0
+            }
+        } else {
+            for y in 0..<resolution {
+                let sy = (Double(y) + 0.5) * Double(rect.height) / Double(resolution) - 0.5
+                for x in 0..<resolution {
+                    let sx = (Double(x) + 0.5) * Double(rect.width) / Double(resolution) - 0.5
+                    for channel in 0..<3 {
+                        image[channel * resolution * resolution + y * resolution + x] = Float(
+                            bilinear(source: source, x: sx + Double(rect.x), y: sy + Double(rect.y), channel: channel, rect: rect) / 255.0
+                        )
+                    }
+                    let gray = bilinearGray(source: source, mask: mask, x: sx + Double(rect.x), y: sy + Double(rect.y), rect: rect)
+                    mask512[y * resolution + x] = gray > 0 ? 1 : 0
+                }
             }
         }
         // A 5x5 inference-only dilation; the final composite uses the exact
@@ -262,17 +310,88 @@ public enum RetouchPreprocessor {
         return PreparedInput(image: image, mask: dilated, rect: rect)
     }
 
-    private static func bilinear(source: StraightImage, x: Double, y: Double, channel: Int) -> Double {
+    private struct QtAxis {
+        var points: [Int]
+        var weights: [Int]
+    }
+
+    private static func qtAxis(source: Int, dest: Int) -> QtAxis {
+        var points = [Int](repeating: 0, count: dest)
+        var weights = [Int](repeating: 0, count: dest)
+        let up = dest >= source
+        if up {
+            var value = (0x8000 * source) / dest - 0x8000
+            let increment = (source << 16) / dest
+            for index in 0..<dest {
+                let position = value >> 16
+                points[index] = min(max(0, position), source - 1)
+                if position < 0 || position >= source - 1 {
+                    weights[index] = 0
+                } else {
+                    let shifted = value >> 8
+                    weights[index] = shifted - (shifted & 0xffffff00)
+                }
+                value += increment
+            }
+        } else {
+            var value = 0
+            let increment = (source << 16) / dest
+            for index in 0..<dest {
+                points[index] = min(max(0, value >> 16), source - 1)
+                value += increment
+            }
+        }
+        return QtAxis(points: points, weights: weights)
+    }
+
+    private static func qtUpscale(source: StraightImage, mask: [UInt8], rect: ContextRect, image: inout [Float], mask512: inout [Float]) {
+        let xAxis = qtAxis(source: rect.width, dest: resolution)
+        let yAxis = qtAxis(source: rect.height, dest: resolution)
+        let stride = source.width
+        for y in 0..<resolution {
+            let yp = rect.y + yAxis.points[y]
+            let yw = yAxis.weights[y]
+            let nextY = yw > 0 ? yp + 1 : yp
+            for x in 0..<resolution {
+                let xp = rect.x + xAxis.points[x]
+                let xw = xAxis.weights[x]
+                let nextX = xw > 0 ? xp + 1 : xp
+                for channel in 0..<3 {
+                    let p00 = Int(source.pixels[(yp * stride + xp) * 4 + channel])
+                    let p10 = Int(source.pixels[(yp * stride + nextX) * 4 + channel])
+                    let p01 = Int(source.pixels[(nextY * stride + xp) * 4 + channel])
+                    let p11 = Int(source.pixels[(nextY * stride + nextX) * 4 + channel])
+                    let top = xw > 0 ? ((p00 * (256 - xw) + p10 * xw) >> 8) : p00
+                    let bottom = xw > 0 ? ((p01 * (256 - xw) + p11 * xw) >> 8) : p01
+                    let value = yw > 0 ? ((top * (256 - yw) + bottom * yw) >> 8) : top
+                    image[channel * resolution * resolution + y * resolution + x] = Float(value) / 255.0
+                }
+                let m00 = Int(mask[yp * stride + xp])
+                let m10 = Int(mask[yp * stride + nextX])
+                let m01 = Int(mask[nextY * stride + xp])
+                let m11 = Int(mask[nextY * stride + nextX])
+                let top = xw > 0 ? ((m00 * (256 - xw) + m10 * xw) >> 8) : m00
+                let bottom = xw > 0 ? ((m01 * (256 - xw) + m11 * xw) >> 8) : m01
+                let value = yw > 0 ? ((top * (256 - yw) + bottom * yw) >> 8) : top
+                mask512[y * resolution + x] = value > 0 ? 1 : 0
+            }
+        }
+    }
+
+    private static func bilinear(source: StraightImage, x: Double, y: Double, channel: Int, rect: ContextRect) -> Double {
         let w = source.width
-        let h = source.height
         let x0 = Int(floor(x))
         let y0 = Int(floor(y))
         let fx = x - Double(x0)
         let fy = y - Double(y0)
-        let xa = min(max(0, x0), w - 1)
-        let xb = min(max(0, x0 + 1), w - 1)
-        let ya = min(max(0, y0), h - 1)
-        let yb = min(max(0, y0 + 1), h - 1)
+        let minX = rect.x
+        let maxX = rect.x + rect.width - 1
+        let minY = rect.y
+        let maxY = rect.y + rect.height - 1
+        let xa = min(max(minX, x0), maxX)
+        let xb = min(max(minX, x0 + 1), maxX)
+        let ya = min(max(minY, y0), maxY)
+        let yb = min(max(minY, y0 + 1), maxY)
         let p00 = source.pixels[(ya * w + xa) * 4 + channel]
         let p10 = source.pixels[(ya * w + xb) * 4 + channel]
         let p01 = source.pixels[(yb * w + xa) * 4 + channel]
@@ -282,17 +401,20 @@ public enum RetouchPreprocessor {
         return top * (1 - fy) + bottom * fy
     }
 
-    private static func bilinearGray(source: StraightImage, mask: [UInt8], x: Double, y: Double) -> Double {
+    private static func bilinearGray(source: StraightImage, mask: [UInt8], x: Double, y: Double, rect: ContextRect) -> Double {
         let w = source.width
-        let h = source.height
         let x0 = Int(floor(x))
         let y0 = Int(floor(y))
         let fx = x - Double(x0)
         let fy = y - Double(y0)
-        let xa = min(max(0, x0), w - 1)
-        let xb = min(max(0, x0 + 1), w - 1)
-        let ya = min(max(0, y0), h - 1)
-        let yb = min(max(0, y0 + 1), h - 1)
+        let minX = rect.x
+        let maxX = rect.x + rect.width - 1
+        let minY = rect.y
+        let maxY = rect.y + rect.height - 1
+        let xa = min(max(minX, x0), maxX)
+        let xb = min(max(minX, x0 + 1), maxX)
+        let ya = min(max(minY, y0), maxY)
+        let yb = min(max(minY, y0 + 1), maxY)
         let p00 = mask[ya * w + xa]
         let p10 = mask[ya * w + xb]
         let p01 = mask[yb * w + xa]
@@ -302,13 +424,21 @@ public enum RetouchPreprocessor {
         return top * (1 - fy) + bottom * fy
     }
 
-    public static func composite(source: StraightImage, coverage: [UInt8], predicted: [Float], rect: ContextRect) throws -> StraightImage {
+    public static func composite(source: StraightImage, coverage: [UInt8], predicted: [Float], rect: ContextRect, isCancelled: () -> Bool = { false }) throws -> StraightImage {
         let expected = 3 * resolution * resolution
         guard predicted.count == expected else { throw RetouchFailure.invalidOutputShape }
         guard predicted.allSatisfy({ $0.isFinite }) else { throw RetouchFailure.nonFiniteOutput }
         guard coverage.count == source.width * source.height else { throw RetouchFailure.invalidMask }
+        // The Python reference clips and casts the 512x512 float output to
+        // uint8 BEFORE Qt scales it back to the context rect. Interpolating
+        // float values here changes the reconstruction at edges.
+        var predicted8 = [UInt8](repeating: 0, count: expected)
+        for index in 0..<expected {
+            predicted8[index] = UInt8(min(255, max(0, Int(predicted[index]))))
+        }
         var result = source
         for y in 0..<rect.height {
+            if isCancelled() { throw RetouchFailure.cancelled }
             let sy = (Double(y) + 0.5) * Double(resolution) / Double(rect.height) - 0.5
             for x in 0..<rect.width {
                 let sx = (Double(x) + 0.5) * Double(resolution) / Double(rect.width) - 0.5
@@ -316,7 +446,7 @@ public enum RetouchPreprocessor {
                 let alpha = Double(coverage[index]) / 255.0
                 guard alpha > 0 else { continue }
                 for channel in 0..<3 {
-                    let fill = bilinearPredicted(predicted, x: sx, y: sy, channel: channel)
+                    let fill = bilinearPredicted8(predicted8, x: sx, y: sy, channel: channel)
                     let old = Double(source.pixels[index * 4 + channel])
                     let value = (fill * alpha + old * (1 - alpha)).rounded(.toNearestOrEven)
                     result.pixels[index * 4 + channel] = UInt8(min(255, max(0, value)))
@@ -326,7 +456,7 @@ public enum RetouchPreprocessor {
         return result
     }
 
-    private static func bilinearPredicted(_ predicted: [Float], x: Double, y: Double, channel: Int) -> Double {
+    private static func bilinearPredicted8(_ predicted: [UInt8], x: Double, y: Double, channel: Int) -> Double {
         let width = resolution
         let height = resolution
         let x0 = Int(floor(x))
@@ -401,32 +531,61 @@ public actor StraightImageDecoder {
     }
 
     private static func rgba(from image: CGImage, width: Int, height: Int) throws -> StraightImage {
-        guard image.bitsPerComponent == 8, image.width == width, image.height == height else {
+        guard image.width == width, image.height == height,
+              image.bitsPerComponent == 8,
+              image.bitsPerPixel == 24 || image.bitsPerPixel == 32 else {
             throw RetouchFailure.unsupportedPixelLayout
+        }
+        guard let colorSpace = image.colorSpace,
+              colorSpace.model == .rgb,
+              colorSpace.numberOfComponents == 3 else {
+            throw RetouchFailure.unsupportedColorSpace
+        }
+        let bitmap = image.bitmapInfo
+        if bitmap.contains(.floatComponents) {
+            throw RetouchFailure.unsupportedPixelLayout
+        }
+        let byteOrder = bitmap.intersection(.byteOrderMask)
+        if byteOrder != .byteOrderDefault && byteOrder != .byteOrder32Big {
+            // CGImage byte-order variants are not silently reinterpreted as RGBA.
+            throw RetouchFailure.unsupportedPixelLayout
+        }
+        let alpha = image.alphaInfo
+        switch alpha {
+        case .last, .first, .none, .noneSkipLast, .noneSkipFirst:
+            break
+        case .alphaOnly:
+            throw RetouchFailure.unsupportedAlphaLayout
+        case .premultipliedLast, .premultipliedFirst:
+            break
+        @unknown default:
+            throw RetouchFailure.unsupportedAlphaLayout
         }
         guard let data = image.dataProvider?.data, let pointer = CFDataGetBytePtr(data) else {
             throw RetouchFailure.invalidImage
         }
-        let alpha = image.alphaInfo
+        let step = image.bitsPerPixel / 8
+        let bytesPerRow = image.bytesPerRow
+        let required = bytesPerRow * height
+        guard step == 3 || step == 4, bytesPerRow >= width * step,
+              CFDataGetLength(data) >= required else {
+            throw RetouchFailure.bufferTooSmall
+        }
         if alpha == .premultipliedLast || alpha == .premultipliedFirst {
-            // Hidden RGB cannot be reconstructed from a premultiplied buffer.
-            // Fully opaque images are safe, but we still reject anything with
-            // a non-255 alpha sample.
-            let bytes = CFDataGetLength(data)
-            let step = image.bitsPerPixel / 8
-            if step > 0 {
-                for index in stride(from: 0, to: bytes, by: step) {
-                    let alphaIndex = (alpha == .premultipliedFirst) ? index : index + 3
-                    if alphaIndex < bytes && pointer[alphaIndex] != 255 {
+            // Hidden RGB cannot be reconstructed from premultiplied storage.
+            // Only fully opaque images are safe; any semi-transparent sample is rejected.
+            for y in 0..<height {
+                for x in 0..<width {
+                    let index = y * bytesPerRow + x * step
+                    let alphaIndex = alpha == .premultipliedFirst ? index : index + 3
+                    if pointer[alphaIndex] != 255 {
                         throw RetouchFailure.premultipliedAlpha
                     }
                 }
             }
         }
-        let bytesPerRow = image.bytesPerRow
-        let step = image.bitsPerPixel / 8
-        guard step == 3 || step == 4 else { throw RetouchFailure.unsupportedPixelLayout }
         let alphaFirst = alpha == .first || alpha == .premultipliedFirst || alpha == .noneSkipFirst
+        let hasAlpha = alpha == .last || alpha == .first || alpha == .premultipliedLast || alpha == .premultipliedFirst
         var output = [UInt8](repeating: 255, count: width * height * 4)
         for y in 0..<height {
             let row = y * bytesPerRow
@@ -438,12 +597,12 @@ public actor StraightImageDecoder {
                         output[target] = pointer[sourceIndex + 1]
                         output[target + 1] = pointer[sourceIndex + 2]
                         output[target + 2] = pointer[sourceIndex + 3]
-                        output[target + 3] = pointer[sourceIndex]
+                        output[target + 3] = hasAlpha ? pointer[sourceIndex] : 255
                     } else {
                         output[target] = pointer[sourceIndex]
                         output[target + 1] = pointer[sourceIndex + 1]
                         output[target + 2] = pointer[sourceIndex + 2]
-                        output[target + 3] = pointer[sourceIndex + 3]
+                        output[target + 3] = hasAlpha ? pointer[sourceIndex + 3] : 255
                     }
                 } else {
                     output[target] = pointer[sourceIndex]
@@ -453,7 +612,8 @@ public actor StraightImageDecoder {
                 }
             }
         }
-        return StraightImage(width: width, height: height, pixels: output)
+        let icc = colorSpace.copyICCData() as Data?
+        return StraightImage(width: width, height: height, pixels: output, iccProfile: icc)
     }
 
     private static func orient(_ image: StraightImage, orientation: Int) throws -> StraightImage {
