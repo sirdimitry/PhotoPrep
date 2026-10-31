@@ -41,6 +41,25 @@ final class OutputEditingTests: XCTestCase {
         XCTAssertNotEqual(out.pixels, base.pixels)
     }
 
+    func testLogoSourceOverOnTransparentBase() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let logoURL = dir.appendingPathComponent("logo.png")
+        let logo = image(2, 2, alpha: 255)
+        guard let cg = logo.cgImage(), let dest = CGImageDestinationCreateWithURL(logoURL as CFURL, UTType.png.identifier as CFString, 1, nil) else {
+            return XCTFail("logo encode")
+        }
+        CGImageDestinationAddImage(dest, cg, nil); XCTAssertTrue(CGImageDestinationFinalize(dest))
+        let asset = try OutputEditing.loadLogo(logoURL.path, mode: "logo")
+        let base = StraightImage(width: 20, height: 20, pixels: [UInt8](repeating: 0, count: 20 * 20 * 4))
+        let placement = SessionLogo(path: logoURL.path, width: 0.9, opacity: 0.5, x: 0, y: 0, enabled: true, mode: "logo")
+        let out = try OutputEditing.applyLogo(base, logo: placement, asset: asset, width: 20, height: 20)
+        let center = (10 * 20 + 10) * 4
+        XCTAssertEqual(out.pixels[center + 3], 128, accuracy: 2)
+        XCTAssertGreaterThan(out.pixels[center], 200)
+    }
+
     func testExportEncodingAndExclusiveWrite() throws {
         let source = image(16, 8, alpha: 128)
         let png = try ExportWriter.encode(source, format: .png)

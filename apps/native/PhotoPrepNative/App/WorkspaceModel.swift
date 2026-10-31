@@ -1230,6 +1230,9 @@ final class WorkspaceModel: ObservableObject {
                 let identity: SourceIdentity
                 if let known = state.sourceIdentity { identity = known }
                 else { identity = try SourceIdentity.capture(photo.url); state.sourceIdentity = identity; editStates[photo.url] = state }
+                guard try SourceIdentity.capture(photo.url) == identity else {
+                    throw RetouchFailure.sourceChanged
+                }
                 let base: StraightImage
                 if state.passes.isEmpty {
                     base = try await imageDecoder.decode(url: photo.url)
@@ -1243,18 +1246,45 @@ final class WorkspaceModel: ObservableObject {
                 let aspect = Double(photo.width) / Double(photo.height)
                 let crop = state.crop ?? fittedCrop(sourceAspect: aspect)
                 let width = sessionOutputWidth, height = sessionOutputHeight
+                let pixels = UInt64(width) * UInt64(height)
+                guard width > 0, height > 0, width <= 16000, height <= 16000, pixels <= 40_000_000 else {
+                    throw RetouchFailure.imageTooLarge
+                }
+                do {
+                    try policy.admitRetouch(pixels: pixels,
+                                            residentBytes: SystemMemory.physicalFootprintBytes() ?? 0,
+                                            availableBytes: SystemMemory.availableBytes(),
+                                            pressure: pressure)
+                } catch { throw RetouchFailure.insufficientMemory }
                 let logo = state.logo
+                let logoIdentity = try logo.map { try SourceIdentity.capture(URL(fileURLWithPath: $0.path)) }
                 let encoded = try await Task.detached(priority: .userInitiated) { () -> Data in
-                    var output = try OutputEditing.crop(base, to: crop, width: width, height: height)
+                    if cancellation.isCancelled { throw OutputEditingError.cancelled }
+                    var output = try OutputEditing.crop(base, to: crop, width: width, height: height,
+                                                        isCancelled: { cancellation.isCancelled })
                     if let logo, logo.enabled, logo.opacity > 0 {
                         let asset = try OutputEditing.loadLogo(logo.path, mode: logo.mode)
-                        output = try OutputEditing.applyLogo(output, logo: logo, asset: asset, width: width, height: height)
+                        output = try OutputEditing.applyLogo(output, logo: logo, asset: asset,
+                                                             width: width, height: height,
+                                                             isCancelled: { cancellation.isCancelled })
                     }
                     return try ExportWriter.encode(output, format: format, quality: quality)
                 }.value
                 if cancellation.isCancelled { break }
-                try Self.writeExport(encoded, folder: folder, stem: photo.url.deletingPathExtension().lastPathComponent,
-                                     format: format, originals: Set(photos.map { $0.url.standardizedFileURL }))
+                guard try SourceIdentity.capture(photo.url) == identity else {
+                    throw RetouchFailure.sourceChanged
+                }
+                if let logo, let logoIdentity {
+                    guard try SourceIdentity.capture(URL(fileURLWithPath: logo.path)) == logoIdentity else {
+                        throw OutputEditingError.invalidLogo
+                    }
+                }
+                let originals = Set(photos.map { $0.url.standardizedFileURL })
+                try await Task.detached(priority: .userInitiated) {
+                    try Self.writeExport(encoded, folder: folder,
+                                         stem: photo.url.deletingPathExtension().lastPathComponent,
+                                         format: format, originals: originals)
+                }.value
                 exportDone = index + 1
             } catch {
                 exportError = (error as? OutputEditingError).map { "export_\($0)" } ?? Self.code(for: error)
@@ -1263,14 +1293,16 @@ final class WorkspaceModel: ObservableObject {
         }
     }
 
-    private static func writeExport(_ data: Data, folder: URL, stem: String, format: ExportFormat,
+    nonisolated private static func writeExport(_ data: Data, folder: URL, stem: String, format: ExportFormat,
                                     originals: Set<URL>) throws {
         let suffix = format == .png ? ".png" : ".jpg"
         for index in 0..<1000 {
             let name = "\(stem)-logo" + (index == 0 ? "" : String(format: "%02d", index)) + suffix
             let target = folder.appendingPathComponent(name).standardizedFileURL
             if originals.contains(target) { continue }
-            if (try? ExportWriter.writeExclusive(data, to: target)) == true { return }
+            do {
+                if try ExportWriter.publish(data, to: target) { return }
+            } catch { throw error }
         }
         throw OutputEditingError.encode
     }
