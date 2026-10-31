@@ -103,9 +103,12 @@ public enum SessionCodec {
                 photo.mask = parsed.mask
                 photo.passes = parsed.passes
                 photo.crop = parsed.crop
-                photo.logo = parsed.logo
-                if parsed.crop != nil { readOnly = "unsupported_crop" }
-                if parsed.logo != nil { readOnly = readOnly ?? "unsupported_logo" }
+                photo.logo = parsed.logo.map { logo in
+                    var value = logo
+                    value.path = logo.path.hasPrefix("/") ? logo.path
+                        : parent.appendingPathComponent(logo.path).standardizedFileURL.path
+                    return value
+                }
                 if parsed.passes.contains(where: { $0.modelID != "lama" }) { readOnly = "unsupported_model" }
             }
             photos.append(photo)
@@ -126,7 +129,6 @@ public enum SessionCodec {
         var points = 0
         for photo in workspace.photos {
             guard !photo.sourceMissing else { throw SessionError("session_incomplete") }
-            guard photo.crop == nil, photo.logo == nil else { throw SessionError("session_read_only") }
             guard photo.passes.count <= maxPasses,
                   photo.passes.allSatisfy({ $0.modelID == "lama" }) else {
                 throw SessionError("session_read_only")
@@ -135,7 +137,9 @@ public enum SessionCodec {
             points += photo.passes.reduce(0) { $0 + $1.strokes.reduce(0) { $0 + $1.points.count } }
         }
         guard points <= maxPoints else { throw SessionError("session_too_large") }
-        let version = workspace.photos.contains(where: { !$0.passes.isEmpty }) ? 3 : 2
+        let hasTemplate = workspace.photos.contains { $0.logo?.mode == "template" }
+        let hasLogo = workspace.photos.contains { $0.logo != nil }
+        let version = hasTemplate ? 6 : hasLogo ? 5 : workspace.photos.contains(where: { !$0.passes.isEmpty }) ? 3 : 2
         let parent = url.deletingLastPathComponent()
         func relative(_ target: URL) -> String {
             let base = parent.standardizedFileURL.pathComponents
@@ -152,6 +156,14 @@ public enum SessionCodec {
             if !photo.passes.isEmpty {
                 edits["passes"] = photo.passes.map { encodeStrokes($0.strokes) }
                 edits["pass_models"] = photo.passes.map(\.modelID)
+            }
+            if let crop = photo.crop {
+                edits["crop"] = ["x": crop.x, "y": crop.y, "width": crop.width, "height": crop.height]
+            }
+            if var logo = photo.logo {
+                logo.path = relative(URL(fileURLWithPath: logo.path))
+                edits["logo"] = ["path": logo.path, "width": logo.width, "opacity": logo.opacity,
+                                 "x": logo.x, "y": logo.y, "enabled": logo.enabled, "mode": logo.mode]
             }
             let view: [String: Any] = ["fit": photo.view.fit, "zoom": photo.view.zoom,
                                        "center_x": photo.view.centerX, "center_y": photo.view.centerY]

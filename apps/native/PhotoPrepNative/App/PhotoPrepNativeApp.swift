@@ -163,7 +163,11 @@ private struct WorkspaceView: View {
                 }.padding(.top, 18).frame(minWidth: 180, idealWidth: 230, maxWidth: 310)
                 ZStack {
                     Color(nsColor: .underPageBackgroundColor)
-                    if let image = model.displayImage {
+                    if model.cropMode, let crop = model.crop, let image = model.cropImage {
+                        CropCanvas(image: image, crop: crop, outputAspect: model.outputAspect,
+                                   onChange: { model.setCrop($0) })
+                            .padding(24)
+                    } else if let image = model.displayImage {
                         BrushCanvas(
                             image: image,
                             strokes: model.strokes,

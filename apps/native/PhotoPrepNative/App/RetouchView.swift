@@ -136,6 +136,7 @@ final class BrushCanvasView: NSView {
 struct RetouchPanel: View {
     @ObservedObject var model: WorkspaceModel
     let language: String
+    @State private var exportFormat: ExportFormat = .png
     private var ru: Bool { language == "ru" }
     private func text(_ russian: String, _ english: String) -> String { ru ? russian : english }
 
@@ -174,6 +175,37 @@ struct RetouchPanel: View {
                 }
                 .font(.caption)
             }
+            HStack {
+                Button(text("Кадрирование", "Crop")) { model.beginCrop() }
+                    .disabled(model.selected == nil || model.retouchBusy)
+                if model.cropMode {
+                    Button(text("Готово", "Done")) { model.cropMode = false }
+                    Button(text("Сбросить", "Reset")) { model.resetCrop() }
+                }
+                Button(text("Отменить кадр", "Undo Crop")) { model.undoCrop() }
+                    .disabled(model.crop == nil || model.retouchBusy)
+            }.font(.caption)
+
+            if let logo = model.logo {
+                Divider()
+                Text(text("Логотип", "Logo")).font(.caption).bold()
+                HStack {
+                    Text(text("Размер", "Size")).font(.caption2)
+                    Slider(value: Binding(get: { logo.width }, set: { model.updateLogo(width: $0) }), in: 0.01...0.94)
+                }
+                HStack {
+                    Text(text("Прозрачность", "Opacity")).font(.caption2)
+                    Slider(value: Binding(get: { logo.opacity }, set: { model.updateLogo(opacity: $0) }), in: 0...1)
+                }
+                HStack {
+                    Button(text("Применить ко всем", "Apply to all")) { model.applyLogoToAll() }
+                    Button(text("Убрать", "Remove")) { model.removeLogo() }
+                }.font(.caption)
+            } else {
+                Button(text("Выбрать PNG-логотип…", "Choose PNG logo…")) { model.chooseLogo() }
+                    .font(.caption)
+            }
+
             Button {
                 model.processMask()
             } label: {
@@ -222,6 +254,28 @@ struct RetouchPanel: View {
                     .font(.caption).foregroundStyle(.orange)
             }
             Divider()
+            Text(text("Экспорт", "Export")).font(.caption).bold()
+            HStack {
+                Picker("", selection: $exportFormat) {
+                    Text("PNG").tag(ExportFormat.png)
+                    Text("JPEG").tag(ExportFormat.jpeg)
+                }.pickerStyle(.segmented).frame(width: 130)
+                Button(text("Экспорт…", "Export…")) {
+                    model.exportPanel(format: exportFormat, quality: 0.92)
+                }.disabled(model.photos.isEmpty || model.exportBusy || model.sessionReadOnly != nil)
+            }
+            if model.exportBusy {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("\(model.exportDone)/\(model.exportTotal)").font(.caption)
+                    Spacer()
+                    Button(text("Отмена", "Cancel")) { model.cancelExport() }.font(.caption)
+                }
+            }
+            if let error = model.exportError {
+                Text(error).font(.caption).foregroundStyle(.orange)
+            }
+            Divider()
             Label(text("Локальная обработка", "Local processing"), systemImage: "lock.shield")
             Text(text("Одна модель LaMa, отдельный worker-процесс, без сети.",
                       "One LaMa model, a separate worker process, no network."))
@@ -246,5 +300,93 @@ struct RetouchPanel: View {
         case "invalid_image": return text("Не удалось прочитать фото или маску.", "Could not read the photo or mask.")
         default: return text("Не удалось обработать фото.", "Could not process the photo.")
         }
+    }
+}
+
+struct CropCanvas: NSViewRepresentable {
+    let image: CGImage?
+    let crop: SessionCrop
+    let outputAspect: Double
+    let onChange: (SessionCrop) -> Void
+
+    func makeNSView(context: Context) -> CropCanvasView {
+        let view = CropCanvasView()
+        view.onChange = onChange
+        return view
+    }
+
+    func updateNSView(_ view: CropCanvasView, context: Context) {
+        view.image = image
+        view.crop = crop
+        view.outputAspect = outputAspect
+        view.onChange = onChange
+        view.needsDisplay = true
+    }
+}
+
+final class CropCanvasView: NSView {
+    var image: CGImage?
+    var crop = SessionCrop(x: 0, y: 0, width: 1, height: 1)
+    var outputAspect: Double = 1
+    var onChange: ((SessionCrop) -> Void)?
+    private var lastPoint: NSPoint?
+
+    override var isFlipped: Bool { true }
+
+    private var frameRect: CGRect {
+        let available = bounds.insetBy(dx: 24, dy: 24)
+        guard available.width > 0, available.height > 0 else { return .zero }
+        var w = available.width, h = w / outputAspect
+        if h > available.height { h = available.height; w = h * outputAspect }
+        return CGRect(x: bounds.midX - w / 2, y: bounds.midY - h / 2, width: w, height: h)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.underPageBackgroundColor.setFill(); bounds.fill()
+        guard let image, image.width > 0, image.height > 0 else { return }
+        let frame = frameRect
+        guard frame.width > 0, crop.width > 0, crop.height > 0 else { return }
+        let displayW = frame.width / CGFloat(crop.width)
+        let displayH = frame.height / CGFloat(crop.height)
+        let rect = CGRect(x: frame.minX - CGFloat(crop.x) * displayW,
+                          y: frame.minY - CGFloat(crop.y) * displayH,
+                          width: displayW, height: displayH)
+        NSGraphicsContext.current?.imageInterpolation = .high
+        NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+            .draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+        NSColor.black.withAlphaComponent(0.55).setFill()
+        let outside = NSBezierPath(rect: bounds)
+        outside.append(NSBezierPath(rect: frame))
+        outside.windingRule = .evenOdd
+        outside.fill()
+        NSColor.systemYellow.setStroke()
+        let border = NSBezierPath(rect: frame); border.lineWidth = 2; border.stroke()
+    }
+
+    override func mouseDown(with event: NSEvent) { lastPoint = convert(event.locationInWindow, from: nil) }
+    override func mouseDragged(with event: NSEvent) {
+        guard let last = lastPoint else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let frame = frameRect
+        guard frame.width > 0 else { return }
+        let dx = Double(point.x - last.x) / Double(frame.width / CGFloat(crop.width))
+        let dy = Double(point.y - last.y) / Double(frame.height / CGFloat(crop.height))
+        var next = crop
+        next.x -= dx; next.y -= dy
+        next.x = min(max(0, next.x), 1 - next.width)
+        next.y = min(max(0, next.y), 1 - next.height)
+        crop = next; lastPoint = point; onChange?(next); needsDisplay = true
+    }
+    override func scrollWheel(with event: NSEvent) {
+        guard image != nil else { return }
+        let factor = event.deltaY > 0 ? 0.94 : 1.06
+        let cx = crop.x + crop.width / 2, cy = crop.y + crop.height / 2
+        var next = crop
+        next.width = min(1, max(0.02, crop.width * factor))
+        next.height = min(1, next.width * (Double(image!.width) / Double(image!.height)) / outputAspect)
+        if next.height > 1 { next.height = 1; next.width = outputAspect * (Double(image!.height) / Double(image!.width)) }
+        next.x = min(max(0, cx - next.width / 2), 1 - next.width)
+        next.y = min(max(0, cy - next.height / 2), 1 - next.height)
+        crop = next; onChange?(next); needsDisplay = true
     }
 }

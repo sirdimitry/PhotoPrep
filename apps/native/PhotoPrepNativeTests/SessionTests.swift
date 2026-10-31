@@ -30,22 +30,19 @@ final class SessionTests: XCTestCase {
         let v4 = try fixture(4, edits: #"{"strokes":[],"passes":[[{"points":[[0.5,0.5]],"width":0.2}]],"pass_models":["migan"]}"#)
         XCTAssertTrue(try SessionCodec.load(v4).readOnly)
         let v5 = try fixture(5, edits: #"{"strokes":[],"logo":{"path":"logo.png","width":0.2,"opacity":1,"x":1,"y":1}}"#)
-        XCTAssertTrue(try SessionCodec.load(v5).readOnly)
+        XCTAssertFalse(try SessionCodec.load(v5).readOnly)
         let v6 = try fixture(6, edits: #"{"strokes":[],"logo":{"path":"logo.png","width":0.2,"opacity":1,"x":1,"y":1,"mode":"template"}}"#)
-        XCTAssertTrue(try SessionCodec.load(v6).readOnly)
+        XCTAssertFalse(try SessionCodec.load(v6).readOnly)
         let v7 = try fixture(7, edits: #"{"strokes":[],"passes":[[{"points":[[0.5,0.5]],"width":0.2}]],"pass_models":["sdxl"]}"#)
         XCTAssertTrue(try SessionCodec.load(v7).readOnly)
     }
 
-    func testCropIsReadOnlyAndNotSilentlyDiscarded() throws {
+    func testCropAndLogoAreSupportedAndRoundTrip() throws {
         let url = try fixture(2, edits: #"{"strokes":[],"crop":{"x":0.1,"y":0.1,"width":0.5,"height":0.5}}"#)
         let loaded = try SessionCodec.load(url)
-        XCTAssertTrue(loaded.readOnly)
-        XCTAssertEqual(loaded.readOnlyReason, "unsupported_crop")
+        XCTAssertFalse(loaded.readOnly)
         XCTAssertNotNil(loaded.photos[0].crop)
-        XCTAssertThrowsError(try SessionCodec.save(loaded, to: url)) { error in
-            XCTAssertEqual((error as? SessionError)?.code, "session_read_only")
-        }
+        XCTAssertNoThrow(try SessionCodec.save(loaded, to: url))
     }
 
     func testSaveIsMinimalAtomicPrivateAndRoundTrips() throws {
@@ -71,7 +68,7 @@ final class SessionTests: XCTestCase {
         let url = try fixture(1)
         let original = try Data(contentsOf: url)
         var workspace = try SessionCodec.load(url)
-        workspace.photos[0].crop = SessionCrop(x: 0.1, y: 0.1, width: 0.5, height: 0.5)
+        workspace.readOnlyReason = "unsupported_model"
         XCTAssertThrowsError(try SessionCodec.save(workspace, to: url))
         XCTAssertEqual(try Data(contentsOf: url), original)
     }
@@ -156,6 +153,20 @@ final class SessionTests: XCTestCase {
         XCTAssertThrowsError(try SessionCodec.save(loaded, to: url)) { error in
             XCTAssertEqual((error as? SessionError)?.code, "session_incomplete")
         }
+    }
+
+    func testLogoRoundTripUsesLogoVersion() throws {
+        let url = try fixture(2, edits: #"{"strokes":[]}"#)
+        var workspace = try SessionCodec.load(url)
+        workspace.photos[0].logo = SessionLogo(path: "logo.png", width: 0.2, opacity: 0.7, x: 0.1, y: 0.2,
+                                               enabled: true, mode: "logo")
+        let out = url.deletingLastPathComponent().appendingPathComponent("logo.photoprep.json")
+        try SessionCodec.save(workspace, to: out)
+        let loaded = try SessionCodec.load(out)
+        XCTAssertEqual(loaded.version, 5)
+        XCTAssertEqual(loaded.photos[0].logo?.width, 0.2)
+        XCTAssertEqual(loaded.photos[0].logo?.opacity, 0.7)
+        XCTAssertEqual(loaded.photos[0].logo?.mode, "logo")
     }
 
 }

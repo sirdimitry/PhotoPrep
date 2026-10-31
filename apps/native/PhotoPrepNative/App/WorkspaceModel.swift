@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 import CoreGraphics
+import ImageIO
 
 enum RetouchTool: String, CaseIterable {
     case brush
@@ -30,6 +31,7 @@ struct PhotoEditState: Sendable {
     var view = SessionView()
     var crop: SessionCrop?
     var logo: SessionLogo?
+    var cropUndo: [SessionCrop?] = []
 }
 
 /// LRU cache of pixel results. Recipes/history live separately, so evicting a
@@ -118,6 +120,9 @@ final class WorkspaceModel: ObservableObject {
             cancelRetouch(wait: true)
             resultImage = nil
             passCount = 0
+            crop = nil
+            logo = nil
+            cropMode = false
             retouchError = nil
             showingAfter = false
             if let selected {
@@ -156,6 +161,8 @@ final class WorkspaceModel: ObservableObject {
         sourceNeedsDecision = false
         strokes = state.mask
         passCount = state.passes.count
+        crop = state.crop
+        logo = state.logo
         if let current, !state.passes.isEmpty {
             resultImage = pixelCache.get(source: current, passes: state.passes, pass: state.passes.count - 1)
         } else {
@@ -186,10 +193,19 @@ final class WorkspaceModel: ObservableObject {
     @Published private(set) var sessionOutputWidth = 1136
     @Published private(set) var sessionOutputHeight = 710
     @Published private(set) var isDirty = false
+    @Published var cropMode = false
+    @Published private(set) var crop: SessionCrop?
+    @Published private(set) var logo: SessionLogo?
+    @Published private(set) var exportBusy = false
+    @Published private(set) var exportDone = 0
+    @Published private(set) var exportTotal = 0
+    @Published private(set) var exportError: String?
     private var sessionURL: URL?
     private var sessionTask: Task<Void, Never>?
     private var sessionGeneration = UUID()
+    private var exportCancellation: CancellationFlag?
     private var sessionScope: URL?
+    private var pressureHistory: [[String: Any]] = []
     private var authorizedSessionFolders: Set<String> = []
 
     var busy: Bool { importBusy || previewBusy || retouchBusy }
@@ -226,7 +242,7 @@ final class WorkspaceModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let next: MemoryPressure = data.contains(.critical) ? .critical : data.contains(.warning) ? .warning : .normal
-                self.memoryPressure(next)
+                self.memoryPressure(next, raw: data.rawValue)
             }
         }
         source.resume()
@@ -238,6 +254,8 @@ final class WorkspaceModel: ObservableObject {
             Task { @MainActor [weak self] in await self?.runCacheSourceChangeSelfTest() }
         } else if CommandLine.arguments.contains("--photoprep-e1-session-replay-selftest") {
             Task { @MainActor [weak self] in await self?.runSessionReplaySelfTest() }
+        } else if CommandLine.arguments.contains("--photoprep-v1-export-selftest") {
+            Task { @MainActor [weak self] in await self?.runV1ExportSelfTest() }
         } else if CommandLine.arguments.contains("--photoprep-session-state-selftest") {
             Task { @MainActor [weak self] in await self?.runSessionStateSelfTest() }
         } else if CommandLine.arguments.contains("--photoprep-e1-full-stress") {
@@ -542,9 +560,31 @@ final class WorkspaceModel: ObservableObject {
         cancelRetouch(wait: true)
     }
 
-    func memoryPressure(_ pressure: MemoryPressure) {
+    func memoryPressure(_ pressure: MemoryPressure, raw: UInt = 0) {
         self.pressure = pressure
-        guard pressure != .normal else { return }
+        let event: [String: Any] = [
+            "timestamp": ISO8601DateFormatter().string(from: Date()),
+            "pressure": "\(pressure)", "raw": raw,
+            "resident": SystemMemory.physicalFootprintBytes() ?? 0,
+            "available": SystemMemory.availableBytes() ?? 0,
+            "photos": photos.count, "selected": selected?.lastPathComponent ?? "",
+            "busy": retouchBusy, "phase": retouchPhase,
+            "preview": preview != nil, "result": resultImage != nil,
+            "dirty": isDirty
+        ]
+        pressureHistory.append(event)
+        if pressureHistory.count > 50 { pressureHistory.removeFirst(pressureHistory.count - 50) }
+        #if DEBUG
+        writeDebugJSON(pressureHistory, name: "pressure-events")
+        NSLog("E1.7 pressure event %@ raw=%llu resident=%llu available=%llu busy=%@ phase=%@",
+              "\(pressure)", raw, SystemMemory.physicalFootprintBytes() ?? 0,
+              SystemMemory.availableBytes() ?? 0, retouchBusy ? "yes" : "no", retouchPhase)
+        #endif
+        if pressure == .normal {
+            issue = nil
+            if selected != nil && preview == nil { requestPreview() }
+            return
+        }
         cancelPreview()
         cancelRetouch(wait: true)
         preview = nil
@@ -593,6 +633,8 @@ final class WorkspaceModel: ObservableObject {
         if showingAfter, let result = resultImage { return result.cgImage() }
         return preview?.image
     }
+
+    var cropImage: CGImage? { resultImage?.cgImage() ?? preview?.image }
 
     var canUndoStroke: Bool { !strokes.isEmpty && !retouchBusy }
     var canProcess: Bool {
@@ -837,6 +879,126 @@ final class WorkspaceModel: ObservableObject {
         }
     }
 
+    var outputAspect: Double { Double(sessionOutputWidth) / Double(sessionOutputHeight) }
+
+    private func sourceAspect(_ url: URL?) -> Double? {
+        guard let url, let header = photos.first(where: { $0.url == url }) else { return nil }
+        return Double(header.width) / Double(header.height)
+    }
+
+    private func fittedCrop(sourceAspect: Double) -> SessionCrop {
+        let output = outputAspect
+        let w: Double, h: Double
+        if sourceAspect > output { w = output / sourceAspect; h = 1 } else { w = 1; h = sourceAspect / output }
+        return SessionCrop(x: (1 - w) / 2, y: (1 - h) / 2, width: w, height: h)
+    }
+
+    private func normalizedCrop(_ value: SessionCrop, sourceAspect: Double) -> SessionCrop {
+        let output = outputAspect
+        var w = min(1, max(0.02, value.width))
+        var h = w * sourceAspect / output
+        if h > 1 { h = 1; w = output / sourceAspect }
+        let x = min(max(0, value.x), 1 - w)
+        let y = min(max(0, value.y), 1 - h)
+        return SessionCrop(x: x, y: y, width: w, height: h)
+    }
+
+    func beginCrop() {
+        guard let selected, let state = editStates[selected] else { return }
+        let aspect = sourceAspect(selected) ?? (4.0 / 3.0)
+        if state.crop == nil {
+            let fit = fittedCrop(sourceAspect: aspect)
+            editStates[selected, default: PhotoEditState()].crop = fit
+            crop = fit
+        } else { crop = state.crop }
+        cropMode = true
+    }
+
+    func setCrop(_ value: SessionCrop) {
+        guard let selected, let aspect = sourceAspect(selected) else { return }
+        var state = editStates[selected] ?? PhotoEditState()
+        state.cropUndo.append(state.crop)
+        let normalized = normalizedCrop(value, sourceAspect: aspect)
+        state.crop = normalized
+        editStates[selected] = state
+        crop = normalized
+        isDirty = true
+    }
+
+    func undoCrop() {
+        guard let selected, var state = editStates[selected], let previous = state.cropUndo.popLast() else { return }
+        state.crop = previous
+        editStates[selected] = state
+        crop = previous
+        isDirty = true
+    }
+
+    func resetCrop() {
+        guard let selected, var state = editStates[selected] else { return }
+        state.cropUndo.append(state.crop)
+        state.crop = nil
+        editStates[selected] = state
+        crop = nil
+        isDirty = true
+    }
+
+    func chooseLogo() {
+        guard let selected else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    _ = try OutputEditing.loadLogo(url.path, mode: "logo")
+                    var state = self.editStates[selected] ?? PhotoEditState()
+                    state.logo = SessionLogo(path: url.path, width: 0.15, opacity: 1, x: 0, y: 0,
+                                             enabled: true, mode: "logo")
+                    self.editStates[selected] = state
+                    self.logo = state.logo
+                    self.isDirty = true
+                } catch { self.exportError = "logo_invalid" }
+            }
+        }
+    }
+
+    func updateLogo(width: Double? = nil, opacity: Double? = nil, x: Double? = nil,
+                    y: Double? = nil, enabled: Bool? = nil) {
+        guard let selected, var value = logo else { return }
+        if let width { value.width = min(0.94, max(0.01, width)) }
+        if let opacity { value.opacity = min(1, max(0, opacity)) }
+        if let x { value.x = min(1, max(0, x)) }
+        if let y { value.y = min(1, max(0, y)) }
+        if let enabled { value.enabled = enabled }
+        var state = editStates[selected] ?? PhotoEditState()
+        state.logo = value
+        editStates[selected] = state
+        logo = value
+        isDirty = true
+    }
+
+    func applyLogoToAll() {
+        guard let value = logo else { return }
+        for key in editStates.keys {
+            var state = editStates[key] ?? PhotoEditState()
+            state.logo = value
+            editStates[key] = state
+        }
+        isDirty = true
+    }
+
+    func removeLogo() {
+        guard let selected, var state = editStates[selected] else { return }
+        state.logo = nil
+        editStates[selected] = state
+        logo = nil
+        isDirty = true
+    }
+
     var canUndoPass: Bool {
         guard let selected else { return false }
         return !retouchBusy && (editStates[selected]?.passes.isEmpty == false)
@@ -1029,6 +1191,90 @@ final class WorkspaceModel: ObservableObject {
                                                  rect: prepared.rect, isCancelled: { cancellation.isCancelled })
     }
 
+    func exportPanel(format: ExportFormat, quality: Double) {
+        guard !exportBusy, !photos.isEmpty else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Экспортировать"
+        panel.begin { [weak self] response in
+            guard response == .OK, let folder = panel.url else { return }
+            Task { @MainActor [weak self] in
+                await self?.exportCollection(to: folder, format: format, quality: quality)
+            }
+        }
+    }
+
+    func cancelExport() {
+        exportCancellation?.cancel()
+    }
+
+    func exportCollection(to folder: URL, format: ExportFormat, quality: Double) async {
+        guard !exportBusy, sessionReadOnly == nil, !sourceNeedsDecision else { return }
+        let cancellation = CancellationFlag()
+        exportCancellation = cancellation
+        exportBusy = true
+        exportDone = 0
+        exportTotal = photos.count
+        exportError = nil
+        defer {
+            exportBusy = false
+            exportCancellation = nil
+        }
+        for (index, photo) in photos.enumerated() {
+            if cancellation.isCancelled { break }
+            do {
+                var state = editStates[photo.url] ?? PhotoEditState()
+                let identity: SourceIdentity
+                if let known = state.sourceIdentity { identity = known }
+                else { identity = try SourceIdentity.capture(photo.url); state.sourceIdentity = identity; editStates[photo.url] = state }
+                let base: StraightImage
+                if state.passes.isEmpty {
+                    base = try await imageDecoder.decode(url: photo.url)
+                } else if let cached = pixelCache.get(source: identity, passes: state.passes, pass: state.passes.count - 1) {
+                    base = cached
+                } else {
+                    base = try await replayPasses(url: photo.url, passes: state.passes, identity: identity,
+                                                  cancellation: cancellation, maskRevision: 0, editRevision: 0)
+                }
+                if cancellation.isCancelled { break }
+                let aspect = Double(photo.width) / Double(photo.height)
+                let crop = state.crop ?? fittedCrop(sourceAspect: aspect)
+                let width = sessionOutputWidth, height = sessionOutputHeight
+                let logo = state.logo
+                let encoded = try await Task.detached(priority: .userInitiated) { () -> Data in
+                    var output = try OutputEditing.crop(base, to: crop, width: width, height: height)
+                    if let logo, logo.enabled, logo.opacity > 0 {
+                        let asset = try OutputEditing.loadLogo(logo.path, mode: logo.mode)
+                        output = try OutputEditing.applyLogo(output, logo: logo, asset: asset, width: width, height: height)
+                    }
+                    return try ExportWriter.encode(output, format: format, quality: quality)
+                }.value
+                if cancellation.isCancelled { break }
+                try Self.writeExport(encoded, folder: folder, stem: photo.url.deletingPathExtension().lastPathComponent,
+                                     format: format, originals: Set(photos.map { $0.url.standardizedFileURL }))
+                exportDone = index + 1
+            } catch {
+                exportError = (error as? OutputEditingError).map { "export_\($0)" } ?? Self.code(for: error)
+                break
+            }
+        }
+    }
+
+    private static func writeExport(_ data: Data, folder: URL, stem: String, format: ExportFormat,
+                                    originals: Set<URL>) throws {
+        let suffix = format == .png ? ".png" : ".jpg"
+        for index in 0..<1000 {
+            let name = "\(stem)-logo" + (index == 0 ? "" : String(format: "%02d", index)) + suffix
+            let target = folder.appendingPathComponent(name).standardizedFileURL
+            if originals.contains(target) { continue }
+            if (try? ExportWriter.writeExclusive(data, to: target)) == true { return }
+        }
+        throw OutputEditingError.encode
+    }
+
     func cancelRetouch(wait: Bool = false) {
         guard let active = retouchActiveID else { return }
         retouchGeneration = UUID()
@@ -1134,7 +1380,7 @@ final class WorkspaceModel: ObservableObject {
         showingAfter = false
     }
 
-    private func writeDebugJSON(_ value: [String: Any], name: String) {
+    private func writeDebugJSON(_ value: Any, name: String) {
         guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted]) else { return }
         let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("PhotoPrep Native/\(name).json")
@@ -1240,6 +1486,58 @@ final class WorkspaceModel: ObservableObject {
               toggleKeptRecipe ? "yes" : "no", replayRestored ? "yes" : "no",
               switchKept ? "yes" : "no", undoKeptOne ? "yes" : "no")
         NSLog("E1.3 history cancel mask kept=\(cancelKeptMask ? "yes" : "no") undoOrdered=\(undoOrdered ? "yes" : "no")")
+        NSApplication.shared.terminate(nil)
+    }
+
+    func runV1ExportSelfTest() async {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let coffee = base.appendingPathComponent("real-coffee.png")
+        let astro = base.appendingPathComponent("real-astronaut.png")
+        let logo = base.appendingPathComponent("v1-logo.png")
+        if !FileManager.default.fileExists(atPath: logo.path) {
+            let w = 32, h = 32
+            var p = [UInt8](repeating: 0, count: w*h*4)
+            for y in 8..<24 { for x in 8..<24 {
+                let i=(y*w+x)*4; p[i]=220; p[i+1]=30; p[i+2]=30; p[i+3]=255
+            }}
+            let img = StraightImage(width:w,height:h,pixels:p)
+            if let cg=img.cgImage(), let d=CGImageDestinationCreateWithURL(logo as CFURL, UTType.png.identifier as CFString,1,nil) {
+                CGImageDestinationAddImage(d,cg,nil); _ = CGImageDestinationFinalize(d)
+            }
+        }
+        let originals = [coffee, astro].compactMap { try? SourceIdentity.digest($0) }
+        importURLs([coffee, astro])
+        var waited = 0.0
+        while (photos.count < 2 || importBusy) && waited < 30 { try? await Task.sleep(for: .milliseconds(100)); waited += 0.1 }
+        for url in [coffee, astro] {
+            selected = url
+            try? await Task.sleep(for: .milliseconds(300))
+            setHistoryMask([MaskStroke(points: [MaskPoint(x: 0.05,y: 0.1), MaskPoint(x: 0.3,y: 0.1)], width: 0.1)])
+            processMask(); await waitWhileBusy("v1 export pass")
+            if let selected, var state = editStates[selected] {
+                state.crop = fittedCrop(sourceAspect: sourceAspect(selected) ?? 4.0/3.0)
+                state.logo = SessionLogo(path: logo.path, width: 0.2, opacity: 0.9, x: 0, y: 0, enabled: true, mode: "logo")
+                editStates[selected] = state
+            }
+        }
+        let folder = base.appendingPathComponent("v1-export", isDirectory: true)
+        try? FileManager.default.removeItem(at: folder)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        await exportCollection(to: folder, format: .png, quality: 0.92)
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        var dims: [[String:Any]] = []
+        for f in files where f.pathExtension.lowercased()=="png" {
+            if let src=CGImageSourceCreateWithURL(f as CFURL,nil), let image=CGImageSourceCreateImageAtIndex(src,0,nil) {
+                dims.append(["name":f.lastPathComponent,"width":image.width,"height":image.height])
+            }
+        }
+        let after = [coffee, astro].compactMap { try? SourceIdentity.digest($0) }
+        let report: [String:Any] = ["exported": dims.count, "expected": 2,
+                                    "dimensions": dims, "error": exportError ?? "",
+                                    "originalsUnchanged": originals == after,
+                                    "dirty": isDirty]
+        writeDebugJSON(report, name: "v1-export")
+        NSLog("V1 export: files=%d error=%@ originals=%@", dims.count, exportError ?? "", originals == after ? "yes" : "no")
         NSApplication.shared.terminate(nil)
     }
 
