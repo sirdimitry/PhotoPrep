@@ -20,7 +20,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild -project apps/native/PhotoPrepNative.xcodeproj -scheme PhotoPrepNative \
   -configuration Debug -destination 'platform=macOS,arch=arm64' \
-  -derivedDataPath work/native-build build CODE_SIGNING_ALLOWED=NO
+  -derivedDataPath work/e1-build build CODE_SIGNING_ALLOWED=NO
 ```
 
 The app target has a build phase that copies the compiled model from
@@ -50,7 +50,7 @@ app container (or otherwise accessible under App Sandbox), not `/tmp`.
 Use `PHOTOPREP_E1_WIDTH` / `PHOTOPREP_E1_HEIGHT` to exercise 1024×768,
 4000×3000 and 8000×5000 synthetic sources.
 
-Development app: `work/native-build/Build/Products/Debug/PhotoPrep Native.app`.
+Development app: `work/e1-build/Build/Products/Debug/PhotoPrep Native.app`.
 It is not installed over Python. The project uses ad-hoc development signing,
 not Developer ID/notarization. Internal build version 0.0.1 is not a release number.
 Native CI checks build/core tests; real UI/inference/release checks remain separate.
