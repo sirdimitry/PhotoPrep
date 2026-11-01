@@ -1,3 +1,5 @@
+> Current application: PhotoPrep Native 0.3.0. Use [the native build guide](apps/native/README.md). Python commands below describe the archived application. Release packaging must include licence notices and exclude all user/test photos, PNG branding, sessions, preferences and caches.
+
 # Development
 
 Current working Python release: **0.2.0**, based on **0.1.0-alpha.18**.

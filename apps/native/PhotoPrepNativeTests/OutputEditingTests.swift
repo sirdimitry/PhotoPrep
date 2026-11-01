@@ -60,6 +60,72 @@ final class OutputEditingTests: XCTestCase {
         XCTAssertGreaterThan(out.pixels[center], 200)
     }
 
+    func testLogoNegativeOffsetClipsWithoutMovingOtherPixels() throws {
+        let base = StraightImage(width: 20, height: 20,
+                                 pixels: [UInt8](repeating: 0, count: 20 * 20 * 4))
+        let asset = try XCTUnwrap(image(4, 4).cgImage())
+        let logo = SessionLogo(path: "unused.png", width: 0.2, opacity: 1,
+                               x: -10, y: -10, enabled: true, mode: "logo")
+        let out = try OutputEditing.applyLogo(base, logo: logo, asset: asset, width: 20, height: 20)
+        for y in 0..<20 { for x in 0..<20 {
+            XCTAssertEqual(out.pixels[(y * 20 + x) * 4 + 3], x < 2 && y < 2 ? 255 : 0)
+        }}
+    }
+
+    func testLogoCompletelyOutsideFrameLeavesImageUnchanged() throws {
+        let base = image(20, 20)
+        let asset = try XCTUnwrap(image(4, 4).cgImage())
+        let logo = SessionLogo(path: "unused.png", width: 0.2, opacity: 1,
+                               x: -100, y: 100, enabled: true, mode: "logo")
+        let out = try OutputEditing.applyLogo(base, logo: logo, asset: asset, width: 20, height: 20)
+        XCTAssertEqual(out.pixels, base.pixels)
+    }
+
+    func testBrushDiameterUsesShortEdgeAtEveryScale() {
+        let source = MaskRenderer.diameter(normalizedWidth: 0.06, width: 7008, height: 4672)
+        let screen = MaskRenderer.diameter(normalizedWidth: 0.06, width: 1401.6, height: 934.4)
+        XCTAssertEqual(source, 280.32, accuracy: 0.001)
+        XCTAssertEqual(screen, source * 0.2, accuracy: 0.001)
+        XCTAssertEqual(MaskRenderer.diameter(normalizedWidth: 0.06, width: 934.4, height: 1401.6), screen)
+    }
+
+    func testBrushCircleMatchesRenderedMask() {
+        let stroke = MaskStroke(points: [MaskPoint(x: 0.5, y: 0.5)], width: 0.08)
+        let mask = MaskRenderer.render(width: 800, height: 400, strokes: [stroke])
+        let diameter = mask[(200*800)..<(201*800)].filter { $0 >= 128 }.count
+        XCTAssertEqual(Double(diameter), MaskRenderer.diameter(normalizedWidth: 0.08, width: 800, height: 400), accuracy: 1)
+    }
+
+    func testPhotoScalePreservesPointerAnchorAndAllowsEmptyArea() {
+        let old = SessionCrop(x: 0.1, y: 0.2, width: 0.8, height: 0.5)
+        let anchor = CGPoint(x: 0.25, y: 0.75)
+        let smallerPhoto = PhotoComposition.scaledCrop(old, factor: 0.25, anchor: anchor,
+                                                       sourceAspect: 1, outputAspect: 1.6)
+        XCTAssertEqual(smallerPhoto.width, 3.2, accuracy: 0.001)
+        XCTAssertEqual(old.x + 0.25 * old.width, smallerPhoto.x + 0.25 * smallerPhoto.width, accuracy: 0.001)
+        XCTAssertEqual(old.y + 0.75 * old.height, smallerPhoto.y + 0.75 * smallerPhoto.height, accuracy: 0.001)
+        XCTAssertThrowsError(try OutputEditing.crop(image(40, 40), to: smallerPhoto, width: 20, height: 10))
+    }
+
+    func testStrongReductionAveragesFinePatternInsteadOfAliasing() throws {
+        var pixels = [UInt8](repeating: 255, count: 96 * 96 * 4)
+        for y in 0..<96 { for x in 0..<96 {
+            let v: UInt8 = x % 3 == 0 ? 255 : 0
+            for c in 0..<3 { pixels[(y*96+x)*4+c] = v }
+        }}
+        let reduced = try OutputEditing.crop(StraightImage(width: 96, height: 96, pixels: pixels),
+                                             to: SessionCrop(x: 0, y: 0, width: 1, height: 1), width: 16, height: 16)
+        for i in stride(from: 0, to: reduced.pixels.count, by: 4) {
+            XCTAssertEqual(Double(reduced.pixels[i]), 85, accuracy: 1)
+        }
+    }
+
+    func testAreaReductionDoesNotPullHiddenColorAcrossAlphaEdge() throws {
+        let src = StraightImage(width: 2, height: 1, pixels: [255,0,0,255, 0,0,255,0])
+        let out = try OutputEditing.crop(src, to: SessionCrop(x: 0, y: 0, width: 1, height: 1), width: 1, height: 1)
+        XCTAssertEqual(out.pixels, [255,0,0,128])
+    }
+
     func testExportEncodingAndExclusiveWrite() throws {
         let source = image(16, 8, alpha: 128)
         let png = try ExportWriter.encode(source, format: .png)

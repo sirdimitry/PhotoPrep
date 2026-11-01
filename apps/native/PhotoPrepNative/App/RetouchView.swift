@@ -14,6 +14,9 @@ struct BrushCanvas: NSViewRepresentable {
     let cursorEnabled: Bool
     let onCommit: (MaskStroke) -> Void
     let onViewChange: (SessionView) -> Void
+    var compositionRect: CGRect? = nil
+    var onImageScale: ((Double, CGPoint) -> Void)? = nil
+    var onImagePan: ((CGSize) -> Void)? = nil
 
     func makeNSView(context: Context) -> BrushCanvasView {
         let view = BrushCanvasView()
@@ -23,9 +26,13 @@ struct BrushCanvas: NSViewRepresentable {
     }
 
     func updateNSView(_ view: BrushCanvasView, context: Context) {
+        view.compositionRect = compositionRect
+        view.onImageScale = onImageScale
+        view.onImagePan = onImagePan
         view.image = image
         view.strokes = strokes
         view.tool = tool
+        let sizeChanged = view.brushWidth != brushWidth
         view.brushWidth = brushWidth
         view.showMask = showMask
         view.documentSize = documentSize
@@ -35,12 +42,16 @@ struct BrushCanvas: NSViewRepresentable {
         view.cursorEnabled = cursorEnabled
         view.onCommit = onCommit
         view.onViewChange = onViewChange
+        if sizeChanged { view.previewBrushSize() }
         view.refreshCursorOverlay()
         view.needsDisplay = true
     }
 }
 
 final class BrushCanvasView: NSView {
+    var compositionRect: CGRect?
+    var onImageScale: ((Double, CGPoint) -> Void)?
+    var onImagePan: ((CGSize) -> Void)?
     var image: CGImage?
     var strokes: [MaskStroke] = []
     var tool: RetouchTool = .brush
@@ -82,6 +93,7 @@ final class BrushCanvasView: NSView {
     }
 
     private var imageRect: CGRect {
+        if let compositionRect { return compositionRect }
         guard let image, image.width > 0, image.height > 0, documentSize.width > 0, documentSize.height > 0 else { return .zero }
         let available = bounds.insetBy(dx: 8, dy: 8)
         guard available.width > 0, available.height > 0 else { return .zero }
@@ -119,10 +131,22 @@ final class BrushCanvasView: NSView {
         context.restoreGState()
     }
 
+    private static let outlineCursor = NSCursor(
+        image: NSImage(size: NSSize(width: 16, height: 16), flipped: false) { _ in true },
+        hotSpot: NSPoint(x: 8, y: 8))
+
+    func previewBrushSize() {
+        if cursorPoint == nil {
+            let visible = imageRect.intersection(bounds)
+            cursorPoint = CGPoint(x: visible.midX, y: visible.midY)
+        }
+        refreshCursorOverlay()
+    }
+
     func refreshCursorOverlay() {
         let enabled = cursorEnabled && drawingEnabled && !spaceDown && !panEnabled
         guard enabled, let point = cursorPoint else { cursorOverlay.isHidden = true; return }
-        let diameter = max(3, CGFloat(brushWidth) * imageRect.width)
+        let diameter = CGFloat(MaskRenderer.diameter(normalizedWidth: brushWidth, width: imageRect.width, height: imageRect.height))
         cursorOverlay.isHidden = false
         cursorOverlay.update(center: point, diameter: diameter,
                              backingScale: window?.backingScaleFactor ?? 2)
@@ -138,11 +162,10 @@ final class BrushCanvasView: NSView {
     override func mouseMoved(with event: NSEvent) {
         cursorPoint = convert(event.locationInWindow, from: nil)
         refreshCursorOverlay()
-        if drawingEnabled && !panEnabled { NSCursor.crosshair.set() }
+        if drawingEnabled && !panEnabled { Self.outlineCursor.set() }
         else { NSCursor.openHand.set() }
     }
     override func mouseExited(with event: NSEvent) {
-        cursorPoint = nil
         cursorOverlay.isHidden = true
     }
     override func mouseEntered(with event: NSEvent) {
@@ -152,7 +175,7 @@ final class BrushCanvasView: NSView {
     override func layout() { super.layout(); cursorOverlay.frame = bounds; refreshCursorOverlay() }
 
     override func resetCursorRects() {
-        addCursorRect(bounds, cursor: (panEnabled || spaceDown) ? .openHand : .crosshair)
+        addCursorRect(bounds, cursor: (panEnabled || spaceDown) ? .openHand : Self.outlineCursor)
     }
 
     private func normalizedPoint(_ event: NSEvent) -> MaskPoint? {
@@ -185,6 +208,11 @@ final class BrushCanvasView: NSView {
     override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
         if let start = panStart {
+            if let onImagePan {
+                onImagePan(CGSize(width: p.x - start.point.x, height: p.y - start.point.y))
+                panStart = (p, start.view, start.fitZoom)
+                return
+            }
             let rect = imageRect
             guard rect.width > 0, rect.height > 0 else { return }
             var next = start.view
@@ -251,8 +279,10 @@ final class BrushCanvasView: NSView {
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
             guard let self, event.window == self.window else { return event }
             let point = self.convert(event.locationInWindow, from: nil)
-            self.cursorPoint = self.bounds.contains(point) ? point : nil
-            self.refreshCursorOverlay()
+            if self.bounds.contains(point) {
+                self.cursorPoint = point
+                self.refreshCursorOverlay()
+            } else { self.cursorOverlay.isHidden = true }
             return event
         }
     }
@@ -272,27 +302,18 @@ final class BrushCanvasView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        guard image != nil else { return }
-        if event.hasPreciseScrollingDeltas {
-            if abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) {
-                let rect = imageRect
-                guard rect.width > 0, rect.height > 0 else { return }
-                var next = viewport
-                next.fit = false
-                next.zoom = viewport.fit ? fitZoom : viewport.zoom
-                next.centerX = min(1, max(0, viewport.centerX + Double(event.scrollingDeltaX / rect.width)))
-                next.centerY = min(1, max(0, viewport.centerY + Double(event.scrollingDeltaY / rect.height)))
-                viewport = next; onViewChange?(next); needsDisplay = true
-            } else {
-                let factor = exp(Double(event.scrollingDeltaY) * 0.012)
-                zoom(by: min(1.6, max(0.6, factor)), at: convert(event.locationInWindow, from: nil))
-            }
-        } else {
-            zoom(by: event.scrollingDeltaY > 0 ? 1.1 : 0.9, at: convert(event.locationInWindow, from: nil))
-        }
+        guard image != nil, event.scrollingDeltaY != 0 else { return }
+        let delta = Double(event.scrollingDeltaY) * (event.hasPreciseScrollingDeltas ? 0.012 : 0.10)
+        zoom(by: exp(min(0.45, max(-0.45, delta))), at: convert(event.locationInWindow, from: nil))
+        refreshCursorOverlay()
     }
 
     private func zoom(by factor: Double, at point: CGPoint) {
+        if let onImageScale {
+            onImageScale(factor, point)
+            refreshCursorOverlay()
+            return
+        }
         let rect = imageRect
         guard rect.width > 0, rect.height > 0 else { return }
         var next = viewport
@@ -306,6 +327,7 @@ final class BrushCanvasView: NSView {
         let centerBottom = Double(pyBottom) - Double(point.y - bounds.midY) / Double(newH)
         next.centerY = min(1, max(0, 1 - centerBottom))
         viewport = next; onViewChange?(next); needsDisplay = true
+        refreshCursorOverlay()
     }
 
     private static func grayImage(_ bytes: [UInt8], width: Int, height: Int) -> CGImage? {
@@ -596,8 +618,6 @@ final class CropCanvasView: NSView {
         let dy = Double(point.y - last.y) / Double(frame.height / CGFloat(crop.height))
         var next = crop
         next.x -= dx; next.y += dy
-        next.x = min(max(0, next.x), 1 - next.width)
-        next.y = min(max(0, next.y), 1 - next.height)
         crop = next; lastPoint = point; onChange?(next); needsDisplay = true
     }
     override func mouseUp(with event: NSEvent) {
@@ -614,21 +634,25 @@ final class CropCanvasView: NSView {
         if next != crop { crop = next; onChange?(next); needsDisplay = true }
     }
 
+    override func magnify(with event: NSEvent) {
+        scaleImage(by: max(0.1, 1 + Double(event.magnification)), at: convert(event.locationInWindow, from: nil))
+    }
+
     override func scrollWheel(with event: NSEvent) {
-        guard image != nil, event.modifierFlags.contains(.command) else { return }
-        let factor = event.deltaY > 0 ? 0.94 : 1.06
+        guard image != nil, event.scrollingDeltaY != 0 else { return }
+        let delta = Double(event.scrollingDeltaY) * (event.hasPreciseScrollingDeltas ? 0.012 : 0.10)
+        scaleImage(by: exp(min(0.45, max(-0.45, delta))), at: convert(event.locationInWindow, from: nil))
+    }
+
+    private func scaleImage(by zoom: Double, at p: CGPoint) {
+        guard image != nil else { return }
         let frame = frameRect
         guard frame.width > 1, frame.height > 1 else { return }
-        let p = convert(event.locationInWindow, from: nil)
         let rx = min(1, max(0, (p.x - frame.minX) / frame.width))
         let ryTop = min(1, max(0, (frame.maxY - p.y) / frame.height))
-        var next = crop
-        next.width = min(4, max(0.02, crop.width * factor))
-        next.height = next.width * (Double(image!.width) / Double(image!.height)) / outputAspect
-        guard next.width.isFinite, next.height.isFinite, next.height > 0, next.height < 8 else { return }
-        next.x = crop.x + rx * (crop.width - next.width)
-        next.y = crop.y + ryTop * (crop.height - next.height)
-        guard next.x.isFinite, next.y.isFinite else { return }
+        let next = PhotoComposition.scaledCrop(crop, factor: zoom, anchor: CGPoint(x: rx, y: ryTop),
+                                                sourceAspect: documentSize.width / documentSize.height,
+                                                outputAspect: outputAspect)
         crop = next; onChange?(next); needsDisplay = true
     }
 }

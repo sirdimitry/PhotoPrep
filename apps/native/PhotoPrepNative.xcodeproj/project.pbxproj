@@ -36,14 +36,14 @@ DC76E9F0C0006E8F919E0C51 = { isa = PBXGroup; children = (A1111111111111111111111
 BCE16DD0260827ECF338C787 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (C83ED6DE2ED53713693ECEF6,1C44C9EE6C71AE74F896DF22,EBBC620E387A335AC6356959,38CD1C927AC7221B7FC7663D,B11111111111111111111111,B77777777777777777777777,B88888888888888888888888,B66666666666666666666661,B77777777777777777777771,B99999999999999999999999,B22222222222222222222222,B33333333333333333333333,B44444444444444444444444,B55555555555555555555555,); runOnlyForDeploymentPostprocessing = 0; };
 7561BFB015D8F536760CB671 = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 0189424A5A60FED329FA868E = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (B55555555555555555555551,); runOnlyForDeploymentPostprocessing = 0; };
-C66666666666666666666666 = { isa = PBXShellScriptBuildPhase; buildActionMask = 2147483647; files = (); inputPaths = (); name = "Copy LaMa model"; outputPaths = (); runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/sh; shellScript = "set -e\nMODEL=\"${PHOTOPREP_LAMA_MODEL:-$SRCROOT/../../../e0-data/work/e0/models/LaMa-fp32.mlmodelc}\"\nDEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Models\"\nif [ -d \"$MODEL\" ]; then\n  mkdir -p \"$DEST\"\n  rm -rf \"$DEST/LaMa-fp32.mlmodelc\"\n  ditto \"$MODEL\" \"$DEST/LaMa-fp32.mlmodelc\"\nelse\n  echo \"warning: LaMa model not found at $MODEL\"\nfi\n"; };
+C66666666666666666666666 = { isa = PBXShellScriptBuildPhase; buildActionMask = 2147483647; files = (); inputPaths = (); name = "Copy LaMa model"; outputPaths = (); runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/sh; shellScript = "set -e\nMODEL=\"${PHOTOPREP_LAMA_MODEL:-$SRCROOT/../../../e0-data/work/e0/models/LaMa-fp32.mlmodelc}\"\nRES=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH\"\nif [ -d \"$MODEL\" ]; then\n  mkdir -p \"$RES/Models\"\n  rm -rf \"$RES/Models/LaMa-fp32.mlmodelc\"\n  ditto \"$MODEL\" \"$RES/Models/LaMa-fp32.mlmodelc\"\nelif [ \"$CONFIGURATION\" = \"Release\" ]; then\n  echo \"error: Set PHOTOPREP_LAMA_MODEL to the compiled LaMa model before a Release build\"\n  exit 1\nelse\n  echo \"warning: LaMa model unavailable; inference diagnostics will require a model\"\nfi\nmkdir -p \"$RES/Licenses\"\ncp \"$SRCROOT/../../LICENSE\" \"$RES/Licenses/LICENSE-PhotoPrep.txt\"\ncp \"$SRCROOT/../../THIRD_PARTY_NOTICES.md\" \"$RES/Licenses/THIRD_PARTY_NOTICES.md\"\ncp \"$SRCROOT/PhotoPrepNative/Resources/LICENSE-LaMa.txt\" \"$RES/Licenses/LICENSE-LaMa.txt\"\nxcrun iconutil -c icns \"$SRCROOT/../python/assets/PhotoPrep.iconset\" -o \"$RES/AppIcon.icns\"\n"; };
 89E1FD6268CC0F221A2BE178 = { isa = XCBuildConfiguration; name = Debug; buildSettings = { MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_VERSION = 6.0; CLANG_ENABLE_MODULES = YES; SWIFT_STRICT_CONCURRENCY = complete; ENABLE_USER_SCRIPT_SANDBOXING = YES; DEBUG_INFORMATION_FORMAT = dwarf; }; };
 7082CC0B6FC1282FCEABD07A = { isa = XCBuildConfiguration; name = Debug; buildSettings = {
         PRODUCT_NAME = "PhotoPrep Native"; PRODUCT_BUNDLE_IDENTIFIER = com.sirdimitry.PhotoPrep.Native;
         GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "PhotoPrep Native";
         INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
-        INFOPLIST_KEY_NSHighResolutionCapable = YES;
-        CURRENT_PROJECT_VERSION = 1; MARKETING_VERSION = 0.0.1;
+        INFOPLIST_KEY_NSHighResolutionCapable = YES; INFOPLIST_KEY_CFBundleIconFile = AppIcon;
+        CURRENT_PROJECT_VERSION = 30; MARKETING_VERSION = 0.3.0;
         CODE_SIGN_STYLE = Manual; CODE_SIGN_IDENTITY = "-";
         CODE_SIGN_ENTITLEMENTS = PhotoPrepNative/PhotoPrepNative.entitlements;
         ENABLE_APP_SANDBOX = YES; ENABLE_HARDENED_RUNTIME = YES; ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -56,8 +56,8 @@ E6DE6C99132752C914FEF632 = { isa = XCBuildConfiguration; name = Release; buildSe
         PRODUCT_NAME = "PhotoPrep Native"; PRODUCT_BUNDLE_IDENTIFIER = com.sirdimitry.PhotoPrep.Native;
         GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "PhotoPrep Native";
         INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
-        INFOPLIST_KEY_NSHighResolutionCapable = YES;
-        CURRENT_PROJECT_VERSION = 1; MARKETING_VERSION = 0.0.1;
+        INFOPLIST_KEY_NSHighResolutionCapable = YES; INFOPLIST_KEY_CFBundleIconFile = AppIcon;
+        CURRENT_PROJECT_VERSION = 30; MARKETING_VERSION = 0.3.0;
         CODE_SIGN_STYLE = Manual; CODE_SIGN_IDENTITY = "-";
         CODE_SIGN_ENTITLEMENTS = PhotoPrepNative/PhotoPrepNative.entitlements;
         ENABLE_APP_SANDBOX = YES; ENABLE_HARDENED_RUNTIME = YES; ENABLE_USER_SCRIPT_SANDBOXING = NO;

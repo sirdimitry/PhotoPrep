@@ -218,6 +218,9 @@ final class WorkspaceModel: ObservableObject {
     @Published private(set) var exportBusy = false
     @Published private(set) var exportDone = 0
     @Published private(set) var exportTotal = 0
+    @Published private(set) var exportProcessed = 0
+    @Published private(set) var exportSummary: String?
+    @Published private(set) var exportFailures: [String] = []
     @Published private(set) var exportError: String?
     private var sessionURL: URL?
     private var sessionTask: Task<Void, Never>?
@@ -274,7 +277,11 @@ final class WorkspaceModel: ObservableObject {
         source.resume()
         pressureSource = source
         #if DEBUG
-        if CommandLine.arguments.contains("--photoprep-e1-history-selftest") {
+        if CommandLine.arguments.contains("--photoprep-batch-export-selftest") {
+            Task { @MainActor [weak self] in await self?.runBatchExportSelfTest() }
+        } else if CommandLine.arguments.contains("--photoprep-display-state-selftest") {
+            Task { @MainActor [weak self] in await self?.runDisplayStateSelfTest() }
+        } else if CommandLine.arguments.contains("--photoprep-e1-history-selftest") {
             Task { @MainActor [weak self] in await self?.runCumulativeHistorySelfTest() }
         } else if CommandLine.arguments.contains("--photoprep-e1-cache-source-selftest") {
             Task { @MainActor [weak self] in await self?.runCacheSourceChangeSelfTest() }
@@ -649,14 +656,22 @@ final class WorkspaceModel: ObservableObject {
         terminationDialogOpen = true
         defer { terminationDialogOpen = false }
         let alert = NSAlert()
-        alert.messageText = "Закрыть PhotoPrep?"
-        alert.informativeText = "Завершить работу и закрыть приложение? Несохранённые результаты обработки будут потеряны."
-        alert.addButton(withTitle: "Нет")
-        alert.addButton(withTitle: "Да")
+        alert.messageText = "Точно выйти из PhotoPrep?"
+        alert.informativeText = "Неэкспортированные результаты обработки не будут сохранены."
+        let yes = alert.addButton(withTitle: "Да")
+        yes.identifier = NSUserInterfaceItemIdentifier("confirm-exit-yes")
+        let no = alert.addButton(withTitle: "Нет")
+        no.identifier = NSUserInterfaceItemIdentifier("confirm-exit-no")
+        no.keyEquivalent = "\u{1b}"
         alert.alertStyle = .warning
         NSApp.activate(ignoringOtherApps: true)
-        let approved = alert.runModal() == .alertSecondButtonReturn
-        if approved { allowTermination = true }
+        let approved = alert.runModal() == .alertFirstButtonReturn
+        if approved {
+            // Flush the debounced settings before the process can terminate.
+            persistLogoTask?.cancel()
+            if let value = persistedLogo { storePersistedLogo(value) }
+            allowTermination = true
+        }
         return approved
     }
 
@@ -730,18 +745,38 @@ final class WorkspaceModel: ObservableObject {
         if selected != nil, preview == nil, pressure == .normal { requestPreview() }
     }
 
+    private func recordRetouchEvent(_ event: String) {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+        let folder = base.appendingPathComponent("PhotoPrep Native", isDirectory: true)
+        let url = folder.appendingPathComponent("retouch-events.json")
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            var events = ((try? Data(contentsOf: url)).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [[String: Any]]) ?? []
+            events.append(["timestamp": ISO8601DateFormatter().string(from: Date()), "event": event,
+                           "passes": passCount, "hasResult": resultImage != nil,
+                           "pendingStrokes": strokes.count, "phase": retouchPhase,
+                           "error": retouchError ?? ""])
+            if events.count > 100 { events.removeFirst(events.count - 100) }
+            try JSONSerialization.data(withJSONObject: events, options: [.sortedKeys]).write(to: url, options: .atomic)
+        } catch { /* Diagnostics must not interrupt processing. */ }
+    }
+
     // MARK: - Retouch
 
     var displayImage: CGImage? {
-        if showingAfter, let result = resultImage { return result.cgImage() }
+        if let result = resultImage { return result.cgImage() }
+        // An evicted processed result is restored from its recipe. Never silently
+        // substitute the original photograph while it is being restored.
+        if let selected, editStates[selected]?.passes.isEmpty == false { return nil }
+        guard preview?.header.url == selected else { return nil }
         return preview?.image
     }
 
-    var cropImage: CGImage? { resultImage?.cgImage() ?? preview?.image }
+    var cropImage: CGImage? { displayImage }
 
     var canUndoStroke: Bool { !strokes.isEmpty && !retouchBusy }
     var canProcess: Bool {
-        selected != nil && !strokes.isEmpty && !retouchBusy && !importBusy
+        selected != nil && !strokes.isEmpty && !retouchBusy && !importBusy && !exportBusy
             && pressure == .normal && sessionReadOnly == nil
             && !(selected.flatMap { editStates[$0]?.sourceChanged } ?? false)
     }
@@ -753,8 +788,9 @@ final class WorkspaceModel: ObservableObject {
         editRevision += 1
         if let selected { editStates[selected, default: PhotoEditState()].mask = strokes }
         isDirty = true
-        showingAfter = false
+        showingAfter = resultImage != nil
         retouchError = nil
+        recordRetouchEvent("stroke-added")
     }
 
     func undoLastStroke() {
@@ -764,7 +800,7 @@ final class WorkspaceModel: ObservableObject {
         editRevision += 1
         if let selected { editStates[selected, default: PhotoEditState()].mask = strokes }
         isDirty = true
-        showingAfter = false
+        showingAfter = resultImage != nil
         retouchError = nil
     }
 
@@ -775,7 +811,7 @@ final class WorkspaceModel: ObservableObject {
         editRevision += 1
         if let selected { editStates[selected, default: PhotoEditState()].mask = [] }
         isDirty = true
-        showingAfter = false
+        showingAfter = resultImage != nil
         retouchError = nil
     }
 
@@ -807,10 +843,12 @@ final class WorkspaceModel: ObservableObject {
         retouchBusy = true
         retouchPhase = "preparing"
         retouchError = nil
-        showingAfter = false
+        showingAfter = resultImage != nil
+        recordRetouchEvent("retouch-start")
 
         retouchTask = Task { [weak self] in
             guard let self else { return }
+            defer { self.recordRetouchEvent("retouch-finished") }
             let timingsStart = Date()
             var decodeEnd = timingsStart
             var prepareEnd = timingsStart
@@ -937,6 +975,7 @@ final class WorkspaceModel: ObservableObject {
                 self.editRevision += 1
                 self.resultImage = result
                 self.showingAfter = true
+                self.recordRetouchEvent("retouch-success")
             } catch is CancellationError {
                 guard self.retouchActiveID == jobID else { return }
                 self.retouchActiveID = nil
@@ -997,13 +1036,12 @@ final class WorkspaceModel: ObservableObject {
     }
 
     private func normalizedCrop(_ value: SessionCrop, sourceAspect: Double) -> SessionCrop {
-        let output = outputAspect
-        var w = min(1, max(0.02, value.width))
-        var h = w * sourceAspect / output
-        if h > 1 { h = 1; w = output / sourceAspect }
-        let x = min(max(0, value.x), 1 - w)
-        let y = min(max(0, value.y), 1 - h)
-        return SessionCrop(x: x, y: y, width: w, height: h)
+        guard value.x.isFinite, value.y.isFinite, value.width.isFinite else {
+            return fittedCrop(sourceAspect: sourceAspect)
+        }
+        let w = min(8, max(0.005, value.width))
+        let h = w * sourceAspect / outputAspect
+        return SessionCrop(x: value.x, y: value.y, width: w, height: h)
     }
 
     func setCanvasView(_ value: SessionView) {
@@ -1041,6 +1079,7 @@ final class WorkspaceModel: ObservableObject {
         state.crop = normalized
         editStates[selected] = state
         crop = normalized
+        isDirty = true
     }
 
     func commitCrop() {
@@ -1072,12 +1111,10 @@ final class WorkspaceModel: ObservableObject {
     }
 
     func resetCrop() {
-        guard let selected, var state = editStates[selected] else { return }
-        state.cropUndo.append(state.crop)
-        if state.cropUndo.count > 20 { state.cropUndo.removeFirst(state.cropUndo.count - 20) }
-        state.crop = nil
-        editStates[selected] = state
-        crop = nil
+        guard let selected, let aspect = sourceAspect(selected) else { return }
+        let fitted = fittedCrop(sourceAspect: aspect)
+        editStates[selected, default: PhotoEditState()].crop = fitted
+        crop = fitted
         isDirty = true
     }
 
@@ -1093,7 +1130,10 @@ final class WorkspaceModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 do {
-                    let asset = try OutputEditing.loadLogo(url.path, mode: "logo")
+                    let asset = try await Task.detached(priority: .userInitiated) {
+                        try OutputEditing.loadLogo(url.path, mode: "logo")
+                    }.value
+                    guard self.selected == selected else { return }
                     var state = self.editStates[selected] ?? PhotoEditState()
                     state.logo = SessionLogo(path: url.path,
                                              width: Double(asset.width) / Double(max(1, self.sessionOutputWidth)),
@@ -1134,7 +1174,8 @@ final class WorkspaceModel: ObservableObject {
 
     func applyLogoToAll() {
         guard let value = logo else { return }
-        for key in editStates.keys {
+        for photo in photos {
+            let key = photo.url
             var state = editStates[key] ?? PhotoEditState()
             state.logo = value
             editStates[key] = state
@@ -1223,11 +1264,17 @@ final class WorkspaceModel: ObservableObject {
         guard let value else { logoAsset = nil; return }
         Task { @MainActor [weak self] in
             do {
-                let asset = try OutputEditing.loadLogo(value.path, mode: value.mode)
+                let asset = try await Task.detached(priority: .userInitiated) {
+                    try OutputEditing.loadLogo(value.path, mode: value.mode)
+                }.value
                 guard self?.logo?.path == value.path, self?.logo?.mode == value.mode else { return }
                 self?.logoAsset = asset
                 self?.exportError = nil
-            } catch { self?.logoAsset = nil; self?.exportError = "Не удалось прочитать PNG-логотип" }
+            } catch {
+                guard self?.logo?.path == value.path, self?.logo?.mode == value.mode else { return }
+                self?.logoAsset = nil
+                self?.exportError = "Не удалось прочитать PNG-логотип"
+            }
         }
     }
 
@@ -1267,8 +1314,9 @@ final class WorkspaceModel: ObservableObject {
     private func syncCurrentResultWithCache() {
         guard let url = selected, let state = editStates[url],
               let identity = state.sourceIdentity, !state.passes.isEmpty else { return }
-        if !pixelCache.contains(source: identity, passes: state.passes, pass: state.passes.count - 1) {
-            resultImage = nil
+        // The currently displayed result owns its pixels independently of LRU
+        // admission. Eviction only affects replay when returning to another photo.
+        if resultImage == nil && !pixelCache.contains(source: identity, passes: state.passes, pass: state.passes.count - 1) {
             showingAfter = false
         }
     }
@@ -1435,16 +1483,22 @@ final class WorkspaceModel: ObservableObject {
     }
 
     var selectedCropHasEmptyArea: Bool {
-        guard let selected, let crop = editStates[selected]?.crop else { return false }
+        guard let selected else { return false }
+        return cropHasEmptyArea(for: selected)
+    }
+
+    private func cropHasEmptyArea(for url: URL) -> Bool {
+        guard let crop = editStates[url]?.crop else { return false }
         return crop.x < 0 || crop.y < 0 || crop.x + crop.width > 1.000001 || crop.y + crop.height > 1.000001
     }
 
     func exportPanel(format: ExportFormat, quality: Double) {
-        guard !exportBusy, !photos.isEmpty else { return }
-        if selectedCropHasEmptyArea {
+        guard !exportBusy, !retouchBusy, !importBusy, !photos.isEmpty else { return }
+        if let incomplete = photos.first(where: { cropHasEmptyArea(for: $0.url) }) {
+            selected = incomplete.url
             let alert = NSAlert()
-            alert.messageText = "Кадр выходит за фотографию"
-            alert.informativeText = "Часть выходного кадра не содержит изображения. Вернитесь к кадрированию и уменьшите кадр."
+            alert.messageText = "Фотография не заполняет рамку"
+            alert.informativeText = "Внутри выходного кадра остаются пустые места. Увеличьте или передвиньте фотографию, чтобы заполнить жёлтую рамку целиком, затем повторите экспорт."
             alert.addButton(withTitle: "Вернуться")
             NSApp.activate(ignoringOtherApps: true)
             alert.runModal()
@@ -1478,21 +1532,48 @@ final class WorkspaceModel: ObservableObject {
     }
 
     func exportCollection(to folder: URL, format: ExportFormat, quality: Double) async {
-        guard !exportBusy, sessionReadOnly == nil, !sourceNeedsDecision else { return }
+        guard !exportBusy, !retouchBusy, sessionReadOnly == nil, !sourceNeedsDecision else { return }
+        let batch = photos
+        let states = editStates
+        let outputWidth = sessionOutputWidth, outputHeight = sessionOutputHeight
+        let outputAspect = Double(outputWidth) / Double(outputHeight)
+        let originals = Set(batch.map { $0.url.standardizedFileURL })
+        let accessed = folder.startAccessingSecurityScopedResource()
+        defer { if accessed { folder.stopAccessingSecurityScopedResource() } }
         let cancellation = CancellationFlag()
         exportCancellation = cancellation
         exportBusy = true
         exportDone = 0
-        exportTotal = photos.count
+        exportTotal = batch.count
+        exportProcessed = 0
+        exportFailures = []
+        exportSummary = nil
         exportError = nil
+        var items: [[String: String]] = []
         defer {
             exportBusy = false
             exportCancellation = nil
+            let state = cancellation.isCancelled ? "Экспорт отменён" : "Экспорт завершён"
+            exportSummary = "\(state): сохранено \(exportDone) из \(exportTotal)"
+            if !exportFailures.isEmpty { exportError = exportFailures.joined(separator: "\n") }
+            if let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+                let directory = base.appendingPathComponent("PhotoPrep Native", isDirectory: true)
+                try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let report: [String: Any] = ["timestamp": ISO8601DateFormatter().string(from: Date()),
+                                            "total": exportTotal, "saved": exportDone,
+                                            "failed": exportFailures.count, "cancelled": cancellation.isCancelled,
+                                            "items": items]
+                if let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]) {
+                    try? data.write(to: directory.appendingPathComponent("export-report.json"), options: .atomic)
+                }
+            }
+            recordRetouchEvent("export-finished-\(exportDone)-of-\(exportTotal)-failed-\(exportFailures.count)")
         }
-        for (index, photo) in photos.enumerated() {
+        for photo in batch {
             if cancellation.isCancelled { break }
             do {
-                var state = editStates[photo.url] ?? PhotoEditState()
+                defer { exportProcessed += 1 }
+                var state = states[photo.url] ?? PhotoEditState()
                 let identity: SourceIdentity
                 if let known = state.sourceIdentity { identity = known }
                 else { identity = try SourceIdentity.capture(photo.url); state.sourceIdentity = identity; editStates[photo.url] = state }
@@ -1510,8 +1591,11 @@ final class WorkspaceModel: ObservableObject {
                 }
                 if cancellation.isCancelled { break }
                 let aspect = Double(photo.width) / Double(photo.height)
-                let crop = state.crop ?? fittedCrop(sourceAspect: aspect)
-                let width = sessionOutputWidth, height = sessionOutputHeight
+                let fallbackWidth = min(1, outputAspect / aspect)
+                let fallbackHeight = fallbackWidth * aspect / outputAspect
+                let crop = state.crop ?? SessionCrop(x: (1-fallbackWidth)/2, y: (1-fallbackHeight)/2,
+                                                       width: fallbackWidth, height: fallbackHeight)
+                let width = outputWidth, height = outputHeight
                 let pixels = UInt64(width) * UInt64(height)
                 guard width > 0, height > 0, width <= 16000, height <= 16000, pixels <= 40_000_000 else {
                     throw RetouchFailure.imageTooLarge
@@ -1522,7 +1606,7 @@ final class WorkspaceModel: ObservableObject {
                                             availableBytes: SystemMemory.availableBytes(),
                                             pressure: pressure)
                 } catch { throw RetouchFailure.insufficientMemory }
-                let logo = state.logo
+                let logo = state.logo.flatMap { $0.enabled && $0.opacity > 0 ? $0 : nil }
                 let logoIdentity = try logo.map { try SourceIdentity.capture(URL(fileURLWithPath: $0.path)) }
                 let encoded = try await Task.detached(priority: .userInitiated) { () -> Data in
                     if cancellation.isCancelled { throw OutputEditingError.cancelled }
@@ -1545,16 +1629,31 @@ final class WorkspaceModel: ObservableObject {
                         throw OutputEditingError.invalidLogo
                     }
                 }
-                let originals = Set(photos.map { $0.url.standardizedFileURL })
                 try await Task.detached(priority: .userInitiated) {
                     try Self.writeExport(encoded, folder: folder,
                                          stem: photo.url.deletingPathExtension().lastPathComponent,
                                          format: format, originals: originals)
                 }.value
-                exportDone = index + 1
+                exportDone += 1
+                items.append(["file": photo.url.lastPathComponent, "status": "saved"])
+                recordRetouchEvent("export-file-saved-\(exportDone)-of-\(exportTotal)")
             } catch {
-                exportError = (error as? OutputEditingError).map { "export_\($0)" } ?? Self.code(for: error)
-                break
+                if cancellation.isCancelled || error is CancellationError || (error as? OutputEditingError) == .cancelled { break }
+                let reason: String
+                if let outputError = error as? OutputEditingError {
+                    switch outputError {
+                    case .invalidCrop: reason = "фото не заполняет жёлтую рамку"
+                    case .invalidLogo, .logoTooLarge: reason = "не удалось прочитать логотип"
+                    case .encode: reason = "ошибка кодирования"
+                    default: reason = "ошибка обработки"
+                    }
+                } else if let cocoa = error as? CocoaError {
+                    reason = cocoa.localizedDescription
+                } else { reason = Self.code(for: error) }
+                exportFailures.append("\(photo.url.lastPathComponent): \(reason)")
+                items.append(["file": photo.url.lastPathComponent, "status": "failed", "reason": reason])
+                recordRetouchEvent("export-file-failed-\(reason)")
+                continue
             }
         }
     }
@@ -1785,6 +1884,128 @@ final class WorkspaceModel: ObservableObject {
               switchKept ? "yes" : "no", undoKeptOne ? "yes" : "no")
         NSLog("E1.3 history cancel mask kept=\(cancelKeptMask ? "yes" : "no") undoOrdered=\(undoOrdered ? "yes" : "no")")
         NSApplication.shared.terminate(nil)
+    }
+
+    func runBatchExportSelfTest() async {
+        var checks: [String: Bool] = [:]
+        let fm = FileManager.default
+        let folder = fm.temporaryDirectory.appendingPathComponent("photoprep-batch-" + UUID().uuidString)
+        defer { try? fm.removeItem(at: folder) }
+        do {
+            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            var urls: [URL] = []
+            for index in 0..<4 {
+                let sub = folder.appendingPathComponent("source-\(index)")
+                try fm.createDirectory(at: sub, withIntermediateDirectories: true)
+                let url = sub.appendingPathComponent("same-name.png")
+                let image = StraightImage(width: 80, height: 50,
+                                          pixels: Array(repeating: [UInt8(100+index*20), 60, 90, 255], count: 80*50).flatMap { $0 })
+                try ExportWriter.encode(image, format: .png).write(to: url)
+                urls.append(url)
+            }
+            importURLs(urls)
+            for _ in 0..<150 where photos.count != 4 || importBusy || previewBusy {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            checks["fourImported"] = photos.count == 4
+            sessionOutputWidth = 64; sessionOutputHeight = 40
+            let before = try urls.map { try SourceIdentity.digest($0) }
+            let identity = try SourceIdentity.capture(urls[0])
+            let stroke = MaskStroke(points: [MaskPoint(x: 0.5, y: 0.5)], width: 0.1)
+            let pass = RetouchPass(strokes: [stroke])
+            editStates[urls[0], default: PhotoEditState()].sourceIdentity = identity
+            editStates[urls[0], default: PhotoEditState()].passes = [pass]
+            let processed = StraightImage(width: 80, height: 50,
+                                          pixels: Array(repeating: [UInt8(17), 180, 90, 255], count: 80*50).flatMap { $0 })
+            pixelCache.put(processed, source: identity, passes: [pass], pass: 0)
+            // A hidden, missing PNG must not prevent saving an otherwise valid photo.
+            editStates[urls[3], default: PhotoEditState()].logo = SessionLogo(path: folder.appendingPathComponent("missing-logo.png").path,
+                                                                           width: 0.2, opacity: 1, x: 0, y: 0, enabled: false, mode: "logo")
+            let png = folder.appendingPathComponent("png")
+            let jpg = folder.appendingPathComponent("jpeg")
+            let partial = folder.appendingPathComponent("partial")
+            for target in [png, jpg, partial] { try fm.createDirectory(at: target, withIntermediateDirectories: true) }
+            await exportCollection(to: png, format: .png, quality: 0.9)
+            let files = try fm.contentsOfDirectory(at: png, includingPropertiesForKeys: nil)
+            checks["pngFourOfFour"] = exportDone == 4 && exportFailures.isEmpty && files.count == 4
+            checks["processedPhotoUsesRetouch"] = try await imageDecoder.decode(url: png.appendingPathComponent("same-name-logo.png")).pixels.first == 17
+            let saved = try files.map { try SourceIdentity.digest($0) }
+            await exportCollection(to: png, format: .png, quality: 0.9)
+            checks["collisionKeepsAllEight"] = try exportDone == 4 && (try fm.contentsOfDirectory(atPath: png.path)).count == 8
+            checks["existingExportsUnchanged"] = saved == (try files.map { try SourceIdentity.digest($0) })
+            await exportCollection(to: jpg, format: .jpeg, quality: 0.9)
+            checks["jpegFourOfFour"] = try exportDone == 4 && exportFailures.isEmpty && (try fm.contentsOfDirectory(atPath: jpg.path)).count == 4
+            checks["originalsUnchanged"] = before == (try urls.map { try SourceIdentity.digest($0) })
+            try fm.removeItem(at: urls[1])
+            await exportCollection(to: partial, format: .png, quality: 0.9)
+            checks["failureDoesNotStopRemainingFiles"] = try exportDone == 3 && exportProcessed == 4 && exportFailures.count == 1 && (try fm.contentsOfDirectory(atPath: partial.path)).count == 3
+            checks["summaryReportsPartialFailure"] = exportSummary?.contains("3 из 4") == true && exportError != nil
+        } catch { checks["setup"] = false; print("BATCH_EXPORT_ERROR \(error)") }
+        writeDebugJSON(checks, name: "batch-export-selftest")
+        print("BATCH_EXPORT_SELFTEST " + String(data: (try? JSONSerialization.data(withJSONObject: checks, options: [.sortedKeys])) ?? Data(), encoding: .utf8)!)
+        allowTermination = true
+        NSApp.terminate(nil)
+    }
+
+    func runDisplayStateSelfTest() async {
+        var checks: [String: Bool] = [:]
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("photoprep-display-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let url = folder.appendingPathComponent("synthetic.png")
+            let source = StraightImage(width: 128, height: 80, pixels: Array(repeating: [UInt8(220), 30, 40, 255], count: 128*80).flatMap { $0 })
+            let result = StraightImage(width: 128, height: 80, pixels: Array(repeating: [UInt8(17), 180, 90, 255], count: 128*80).flatMap { $0 })
+            try ExportWriter.encode(source, format: .png).write(to: url)
+            importURLs([url])
+            for _ in 0..<100 where selected == nil || preview == nil || importBusy {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            guard selected == url else { throw RetouchFailure.invalidImage }
+            let identity = try SourceIdentity.capture(url)
+            let stroke = MaskStroke(points: [MaskPoint(x: 0.4, y: 0.4)], width: 0.1)
+            let pass = RetouchPass(strokes: [stroke])
+            editStates[url, default: PhotoEditState()].sourceIdentity = identity
+            editStates[url, default: PhotoEditState()].passes = [pass]
+            resultImage = result
+            passCount = 1
+            showingAfter = true
+            pixelCache.put(result, source: identity, passes: [pass], pass: 0)
+            func displaysProcessed() -> Bool {
+                guard let data = displayImage?.dataProvider?.data else { return false }
+                return (data as Data).first == 17
+            }
+            addStroke(stroke)
+            checks["newStrokeKeepsResult"] = displaysProcessed()
+            undoLastStroke()
+            checks["undoStrokeKeepsResult"] = displaysProcessed()
+            addStroke(stroke)
+            clearMask()
+            checks["clearMaskKeepsResult"] = displaysProcessed()
+            beginCrop()
+            checks["cropKeepsResult"] = cropImage?.dataProvider?.data.map { ($0 as Data).first == 17 } ?? false
+            commitCrop()
+            checks["leaveCropKeepsResult"] = displaysProcessed()
+            showingAfter = false
+            checks["legacyFlagCannotRevealOriginal"] = displaysProcessed()
+            addStroke(stroke)
+            processMask()
+            checks["nextPassKeepsResult"] = displaysProcessed()
+            cancelRetouch(wait: true)
+            try? await Task.sleep(for: .milliseconds(100))
+            checks["cancelKeepsResult"] = displaysProcessed()
+            pixelCache.clear()
+            syncCurrentResultWithCache()
+            checks["cacheEvictionKeepsVisibleResult"] = displaysProcessed()
+            resultImage = nil
+            checks["missingResultNeverShowsOriginal"] = displayImage == nil && cropImage == nil
+            resultImage = result
+            checks["recipeKept"] = editStates[url]?.passes.count == 1
+        } catch { checks["setup"] = false }
+        writeDebugJSON(checks, name: "display-state-selftest")
+        print("DISPLAY_STATE_SELFTEST " + String(data: (try? JSONSerialization.data(withJSONObject: checks, options: [.sortedKeys])) ?? Data(), encoding: .utf8)!)
+        allowTermination = true
+        NSApp.terminate(nil)
     }
 
     func runV1ExportSelfTest() async {

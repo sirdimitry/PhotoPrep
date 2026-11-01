@@ -133,6 +133,11 @@ public struct MaskStroke: Codable, Sendable, Equatable {
 }
 
 public enum MaskRenderer {
+    /// Mask width is a fraction of the shorter image edge, also used by the cursor.
+    public static func diameter(normalizedWidth: Double, width: Double, height: Double) -> Double {
+        normalizedWidth * min(width, height)
+    }
+
     /// Renders a full-resolution grayscale mask, origin top-left, exactly like
     /// the Python/Qt mask contract: round caps/joins, antialiasing, ordered
     /// SourceOver strokes, and a filled circle for a single point.
@@ -158,7 +163,7 @@ public enum MaskRenderer {
             context.scaleBy(x: 1, y: -1)
             for stroke in strokes where !stroke.points.isEmpty {
                 if isCancelled() { return }
-                let lineWidth = max(1.0, stroke.width * Double(min(width, height)))
+                let lineWidth = max(1.0, diameter(normalizedWidth: stroke.width, width: Double(width), height: Double(height)))
                 let gray: CGFloat = stroke.erase ? 0 : 1
                 context.setLineCap(.round)
                 context.setLineJoin(.round)
@@ -804,5 +809,18 @@ public actor StraightImageDecoder {
             }
         }
         return out
+    }
+}
+
+public enum PhotoComposition {
+    public static func scaledCrop(_ crop: SessionCrop, factor: Double, anchor: CGPoint,
+                                  sourceAspect: Double, outputAspect: Double) -> SessionCrop {
+        guard factor.isFinite, factor > 0, crop.width > 0,
+              sourceAspect > 0, outputAspect > 0 else { return crop }
+        let w = min(8, max(0.005, crop.width / factor))
+        let h = w * sourceAspect / outputAspect
+        let rx = min(1, max(0, anchor.x)), ry = min(1, max(0, anchor.y))
+        return SessionCrop(x: crop.x + rx * (crop.width - w),
+                           y: crop.y + ry * (crop.height - h), width: w, height: h)
     }
 }

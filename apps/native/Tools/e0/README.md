@@ -1,3 +1,5 @@
+> Developer-only model conversion tools. The current app and download are documented in [PhotoPrep Native](../../README.md). No test photos or checkpoints belong in Git.
+
 # E0 — LaMa → Core ML conversion and parity lab
 
 Developer-only tooling for the first LaMa Core ML experiment. It is **not**

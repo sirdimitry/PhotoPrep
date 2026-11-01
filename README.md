@@ -1,48 +1,35 @@
-# PhotoPrep
+# PhotoPrep Native
 
 [Русский](README.ru.md)
 
-![PhotoPrep](apps/python/assets/github-banner.png)
+Local photo preparation for macOS: remove an old logo, compose a fixed output frame, add your own PNG branding, and export every open photo.
 
-PhotoPrep prepares photos locally on your Mac: Retouch → Crop → Logo → Batch export.
-Original photos stay unchanged and are never uploaded for processing.
+**[Download PhotoPrep Native 0.3.0](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.3.0)** · [Latest release](https://github.com/sirdimitry/PhotoPrep/releases/latest)
 
-## PhotoPrep Native — the main development direction
+## Requirements and installation
 
-The future macOS application will use **SwiftUI + Core ML**. It has its own
-[application directory](apps/native/README.md) and a detailed
-[migration roadmap](apps/native/ROADMAP.md). An initial SwiftUI foundation and bounded
-photo preview are implemented; [Core ML retouch is still pending](apps/native/STATUS.md).
-No native download is available yet. Python v0.2.0 remains
-the working application and the behavior reference throughout migration.
+Apple Silicon Mac, macOS 14 or later. Intel is not supported by this DMG. Drag **PhotoPrep Native.app** from the DMG to **Applications**. Quit an older running copy before opening the new one.
 
-## Available now: PhotoPrep Python v0.2.0
+The app is ad-hoc signed, not Developer ID signed or notarized. macOS may prevent opening it; this release does not claim Gatekeeper/notarization approval.
 
-**[Download the Apple Silicon DMG and SHA256](https://github.com/sirdimitry/PhotoPrep/releases/tag/v0.2.0)**
+## Workflow
 
-Requires macOS 14+. Python is bundled. The app is ad-hoc signed and is not
-notarized. Intel and other macOS versions have not been verified.
+1. Open photos or a folder. Originals are never overwritten.
+2. Paint the old logo with the mask brush; use the eraser, undo stroke or clear mask to refine it. Run local LaMa retouch; additional passes and pass undo are available.
+3. Move the photo under the fixed yellow frame. Wheel, vertical two-finger scroll and pinch resize the photo; **Fill** restores full coverage. Crop edits apply immediately. Export is blocked if there are empty areas inside the frame.
+4. Choose your own PNG in **Logo**, drag and scale it. Use **Apply to all photos** for the entire collection.
+5. Choose PNG/JPEG and **Export all (N)**. The result reports saved/total and individual failures. Existing files are not overwritten.
 
-The Python/PySide6 application retains LaMa, MI-GAN, optional SDXL, cumulative
-retouch, crop, local PNG branding, JPEG/PNG batch export, RU/EN and light/dark themes.
-It reads session formats 1–7. v0.2.0 packages the working alpha.18 behavior;
-it does not introduce a new session format or a native runtime.
+The FP32 Core ML LaMa model is included: no Python runtime or first-run model download is needed. Photos, masks and logos are processed locally. The DMG contains no sample photographs or customer logos. Application artwork is part of the UI.
 
-Read the [Python user guide](apps/python/README.md), [development guide](DEVELOPMENT.md)
-and [release history](CHANGELOG.md).
+Workspaces are temporary. Export saves the result; photos and retouch history are not restored after quitting. Logo preferences may be remembered locally. PNG alpha is retained; JPEG is flattened on white. Export removes EXIF and other source metadata and uses area filtering for downscaling.
 
-## Repository layout
+## Verification and limits
 
-| Directory | Purpose | Status |
-| --- | --- | --- |
-| [`apps/native/`](apps/native/README.md) | Primary SwiftUI/Core ML direction | Development foundation; no retouch engine yet |
-| [`apps/python/`](apps/python/README.md) | Working Python/PySide6 app, tests, assets, packaging | v0.2.0 |
-| [DEVELOPMENT.md](DEVELOPMENT.md) | Build, validation and release instructions | Both directions |
-| [CHANGELOG.md](CHANGELOG.md) | Additive release history | Earlier entries preserved |
+44 Swift tests plus synthetic app-level checks for retaining retouch results and exporting four files passed locally. Physical trackpad gestures, Intel and low-memory Macs have not been comprehensively validated. Retouch quality depends on the image and mask; the full memory stress acceptance is still open.
 
-Both applications belong in this repository and will coexist. Native migration
-must preserve Python sources, published releases and session compatibility.
-Future native builds must use a distinct app name, bundle identifier and artifact
-name so both apps can be installed together without sharing preferences by accident.
+[Native build and diagnostics](apps/native/README.md) · [Development](DEVELOPMENT.md) · [Changes](CHANGELOG.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
 
-[MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+`apps/python/` is the archived Python implementation. Its source and previous GitHub releases remain available; it is not included in this native DMG. The earlier Python guide is [here](apps/python/README.md).
+
+[MIT license](LICENSE). Bundled LaMa retains Apache-2.0 terms and attribution.

@@ -1,85 +1,36 @@
-# PhotoPrep Native
+# PhotoPrep Native 0.3.0
 
-SwiftUI macOS application, **Native v1 candidate (full UI route not accepted)**. It has a
-straight-RGBA canvas (brush/eraser/undo), one LaMa FP32 pass in a separate
-self-exec worker, before/after, progress/cancel/timeout, job-scoped cancellation,
-and exact outside-mask / alpha preservation. Quality is close to Python on
-coffee/astronaut; grass texture and a few mask pixels remain unresolved. It is
-not a release. The working Python application remains in [../python/](../python/).
-[Current status and limits](STATUS.md), [V1 usable report](V1-USABLE.md),
-[E1.6 report](E1.6-SESSION-UI.md),
-[E1.5 report](E1.5-SESSION-INTEGRITY.md), [E1.4 report](E1.4-HISTORY-SESSIONS.md),
-[E1.3 report](E1.3-QUALITY-HISTORY.md), [E1.2 acceptance report](E1.2-ACCEPTANCE.md),
-[E1.1 report](E1.1-QUALITY-STABILITY.md), [E1 report](E1-LAMA-WORKER.md), and
-[E0 report](E0-LAMA-COREML.md).
+[User guide and download](../../README.md) · [Русское руководство](../../README.ru.md)
 
-## Build and test
+SwiftUI/AppKit photo preparation for Apple Silicon, macOS 14+. Core ML LaMa runs in a separate self-exec worker. The Release DMG bundles the model and licences, without Python, sample photos or user logo assets. Ad-hoc signed; not notarized.
 
-Requires Xcode with Swift 6+, deployment target macOS 14. No external Swift packages.
-Use the installed Xcode via a per-command DEVELOPER_DIR if necessary; do not change
-the user's global toolchain. From the repository root:
+## Build and tests
+
+Xcode / Swift 6 required. From the repository root:
 
 ```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path apps/native
+PHOTOPREP_LAMA_MODEL=/path/to/LaMa-fp32.mlmodelc \
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-  swift test --package-path apps/native --scratch-path work/native-tests
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-  xcodebuild -project apps/native/PhotoPrepNative.xcodeproj -scheme PhotoPrepNative \
-  -configuration Debug -destination 'platform=macOS,arch=arm64' \
-  -derivedDataPath work/v1-build build CODE_SIGNING_ALLOWED=NO
+xcodebuild -project apps/native/PhotoPrepNative.xcodeproj -scheme PhotoPrepNative \
+  -configuration Release -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath work/native-release build CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=YES ARCHS=arm64
 ```
 
-The app target has a build phase that copies the compiled model from
-`PHOTOPREP_LAMA_MODEL` or, by default, from
-`../../../e0-data/work/e0/models/LaMa-fp32.mlmodelc` into
-`Contents/Resources/Models/LaMa-fp32.mlmodelc`. The model is not in Git; without
-it the app builds but reports `model_missing` at retouch time. The build script
-is not a sandbox bypass of the running app: App Sandbox remains enabled for the
-app and its self-exec worker.
+Release builds fail when the model is missing. Debug can build without it for core/UI development. The build phase packages application artwork and licence notices. Model conversion/provenance is documented in [E0](E0-LAMA-COREML.md) and [third-party notices](../../THIRD_PARTY_NOTICES.md). Model weights stay outside Git.
 
-End-to-end diagnostics (signed ad-hoc app; no Python):
+## Current workflow
 
-```bash
-"PhotoPrep Native.app/Contents/MacOS/PhotoPrep Native" --photoprep-e1-selftest
-"PhotoPrep Native.app/Contents/MacOS/PhotoPrep Native" --photoprep-e1-timeout-selftest
-"PhotoPrep Native.app/Contents/MacOS/PhotoPrep Native" --photoprep-e1-crash-selftest
-"PhotoPrep Native.app/Contents/MacOS/PhotoPrep Native" --photoprep-e1-cancel-selftest
-PHOTOPREP_E1_FILE="<container>/real-coffee.png" \
-  "PhotoPrep Native.app/Contents/MacOS/PhotoPrep Native" --photoprep-e1-file-selftest
-```
+One temporary collection; immediate crop edits; fixed output frame; mask/eraser retouch; movable PNG; apply Logo to all; batch PNG/JPEG export. No session open/save commands in the user workflow. Historical session compatibility code remains in Core.
 
-The file self-test decodes a permitted real photo through the same
-straight-RGBA decoder, runs the worker on three synthetic edge-mask strokes and
-writes `<name>.native.png`; it prints outside/alpha changes. Use files inside the
-app container (or otherwise accessible under App Sandbox), not `/tmp`.
+Retouch results remain visible while editing masks and switching tools. An evicted result is restored from its recipe instead of displaying the original as a completed edit. Export snapshots all open photos and settings; one failed file does not stop the others. Hidden PNG assets do not block export. Output files are published atomically without overwriting existing files.
 
-Use `PHOTOPREP_E1_WIDTH` / `PHOTOPREP_E1_HEIGHT` to exercise 1024×768,
-4000×3000 and 8000×5000 synthetic sources.
+## Diagnostics and verification
 
-Development app: `work/v1-build/Build/Products/Debug/PhotoPrep Native.app`.
-It is not installed over Python. The project uses ad-hoc development signing,
-not Developer ID/notarization. Internal build version 0.0.1 is not a release number.
-Native CI checks build/core tests; real UI/inference/release checks remain separate.
+44 Swift tests; 11 app-state checks; 9 batch-export checks. Debug flags `--photoprep-display-state-selftest` and `--photoprep-batch-export-selftest` use disposable synthetic images in an isolated test instance. Model diagnostics include `--photoprep-e1-selftest`; cancellation/timeout checks are implemented in WorkerMain.
 
-`PhotoPrep Native.app` / `com.sirdimitry.PhotoPrep.Native` use their own sandbox
-container and standard UserDefaults. No Python settings or files are migrated.
-App Sandbox grants read-only access to user-selected files; there is currently no
-network entitlement. Later model installation/export will need explicit, scoped
-capabilities and their own verification.
+Release logs are local under the app container's Application Support/PhotoPrep Native: `retouch-events.json` (last 100 events) and `export-report.json` (last batch). No photos are embedded in these logs.
 
-## Contracts and next work
+Current verification notes: [retouch state](RETOUCH-STABLE-2026-11-01.md), [batch export](BATCH-EXPORT-2026-11-01.md), [resampling](FILL-QUALITY-2026-11-01.md). Earlier E0/E1/UI reports are historical, not statements of the latest UI.
 
-* [Verified Python behavior](BEHAVIOR.md)
-* [Quality and resource acceptance](QUALITY-SAFETY.md)
-* [Roadmap](ROADMAP.md)
-* [E1.6 session UI report](E1.6-SESSION-UI.md)
-* [E1.5 session integrity report](E1.5-SESSION-INTEGRITY.md)
-* [E1.4 history/session report](E1.4-HISTORY-SESSIONS.md)
-* [E1.3 quality/history report](E1.3-QUALITY-HISTORY.md)
-* [E1.2 acceptance report](E1.2-ACCEPTANCE.md)
-* [E1.1 quality/stability report](E1.1-QUALITY-STABILITY.md)
-* [E1 worker/UI report](E1-LAMA-WORKER.md)
-* [E0 conversion/parity report](E0-LAMA-COREML.md)
-
-Core sources are also a Swift package for tests. The app builds the same files;
-it has no developer-Python runtime dependency. Python in Tools is exclusively for
-reference benchmarks. Do not commit model weights or `.mlpackage` files.
+Physical gestures, low-memory/Intel hardware and the full repeated-retouch memory acceptance remain unclosed. Do not describe an ad-hoc signature as notarization.

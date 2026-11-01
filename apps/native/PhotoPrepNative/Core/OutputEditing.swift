@@ -21,6 +21,12 @@ public enum OutputEditing {
         let sy = crop.y * Double(source.height)
         let sw = crop.width * Double(source.width)
         let sh = crop.height * Double(source.height)
+        // Minification must integrate each output pixel's source footprint.
+        // Four point samples alias sensor noise when reducing a large photograph.
+        if sw > Double(width) * 1.001 || sh > Double(height) * 1.001 {
+            return try areaCrop(source, sx: sx, sy: sy, sw: sw, sh: sh,
+                                width: width, height: height, isCancelled: isCancelled)
+        }
         var out = [UInt8](repeating: 0, count: width * height * 4)
         for y in 0..<height {
             if isCancelled() { throw OutputEditingError.cancelled }
@@ -30,6 +36,58 @@ public enum OutputEditing {
                 for c in 0..<4 {
                     out[(y * width + x) * 4 + c] = UInt8(clamping: Int(sample(source, fx, fy, c).rounded(.toNearestOrEven)))
                 }
+            }
+        }
+        return StraightImage(width: width, height: height, pixels: out)
+    }
+
+    private static func weights(start: Double, span: Double, count: Int, limit: Int) -> [[(Int, Double)]] {
+        let scale = span / Double(count)
+        return (0..<count).map { output in
+            if scale <= 1 {
+                let center = start + (Double(output) + 0.5) * scale - 0.5
+                let low = Int(floor(center)), fraction = center - floor(center)
+                return [(min(limit-1, max(0, low)), 1-fraction),
+                        (min(limit-1, max(0, low+1)), fraction)]
+            }
+            let low = start + Double(output) * scale, high = low + scale
+            return (Int(floor(low))..<Int(ceil(high))).map { index in
+                (min(limit-1, max(0, index)), max(0, min(high, Double(index+1)) - max(low, Double(index))) / scale)
+            }
+        }
+    }
+
+    private static func areaCrop(_ source: StraightImage, sx: Double, sy: Double, sw: Double, sh: Double,
+                                 width: Int, height: Int, isCancelled: () -> Bool) throws -> StraightImage {
+        let horizontal = weights(start: sx, span: sw, count: width, limit: source.width)
+        let vertical = weights(start: sy, span: sh, count: height, limit: source.height)
+        var out = [UInt8](repeating: 0, count: width * height * 4)
+        // One accumulated output row; no full-resolution intermediate copy.
+        var row = [Double](repeating: 0, count: width * 4)
+        for y in 0..<height {
+            if isCancelled() { throw OutputEditingError.cancelled }
+            for i in row.indices { row[i] = 0 }
+            for (sourceY, wy) in vertical[y] {
+                if isCancelled() { throw OutputEditingError.cancelled }
+                for x in 0..<width {
+                    let di = x * 4
+                    for (sourceX, wx) in horizontal[x] {
+                        let si = (sourceY * source.width + sourceX) * 4
+                        let weight = wx * wy
+                        let alpha = Double(source.pixels[si+3]) / 255
+                        row[di] += Double(source.pixels[si]) * alpha * weight
+                        row[di+1] += Double(source.pixels[si+1]) * alpha * weight
+                        row[di+2] += Double(source.pixels[si+2]) * alpha * weight
+                        row[di+3] += alpha * weight
+                    }
+                }
+            }
+            for x in 0..<width {
+                let ri = x*4, di = (y*width+x)*4, alpha = row[x*4+3]
+                for c in 0..<3 {
+                    out[di+c] = alpha > 0 ? UInt8(clamping: Int((row[ri+c] / alpha).rounded(.toNearestOrEven))) : 0
+                }
+                out[di+3] = UInt8(clamping: Int((alpha*255).rounded(.toNearestOrEven)))
             }
         }
         return StraightImage(width: width, height: height, pixels: out)

@@ -47,3 +47,8 @@ backups/
 
 # Local sessions contain private photo paths
 *.photoprep.json
+
+# Native app bundles and private manual-test artifacts
+*.app/
+private-test-data/
+test-artifacts/

@@ -188,7 +188,7 @@ struct V1WorkspaceView: View {
         .background(Color(white: 0.16))
         .tint(.yellow)
         .background(WindowCloseGuardView(workspace: model))
-        .background(WindowTitleAccessor(title: "PhotoPrep Native v1" + (current.map { " — \($0.url.lastPathComponent)" } ?? "")))
+        .background(WindowTitleAccessor(title: "PhotoPrep Native " + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.3.0") + (current.map { " — \($0.url.lastPathComponent)" } ?? "")))
     }
 
     private var header: some View {
@@ -202,7 +202,7 @@ struct V1WorkspaceView: View {
             Button { model.exportPanel(format: exportFormat, quality: exportQuality) } label: {
                 Label(t("Экспорт", "Export"), systemImage: "square.and.arrow.up")
             }.buttonStyle(.borderedProminent).tint(.yellow).foregroundStyle(.black)
-                .disabled(model.photos.isEmpty || model.exportBusy || model.sessionReadOnly != nil || model.sourceNeedsDecision)
+                .disabled(model.photos.isEmpty || model.exportBusy || model.retouchBusy || model.importBusy || model.sessionReadOnly != nil || model.sourceNeedsDecision)
             SettingsLink { Image(systemName: "gearshape") }.help(t("Настройки оформления", "Appearance settings"))
         }
         .font(.system(size: 12))
@@ -258,11 +258,36 @@ struct V1WorkspaceView: View {
                height: CGFloat(crop.height) * imageRect.height)
     }
 
-    private func logoFrameForCrop(size: CGSize, aspect: Double) -> CGRect {
+    private func cropOutputFrame(size: CGSize, document: CGSize) -> CGRect {
         let available = CGRect(origin: .zero, size: size).insetBy(dx: 24, dy: 24)
-        var w = max(20, available.width), h = w / CGFloat(aspect)
-        if h > available.height { h = max(20, available.height); w = h * CGFloat(aspect) }
-        return CGRect(x: size.width/2-w/2, y: size.height/2-h/2, width: w, height: h)
+        let h = max(1, min(available.height, available.width / model.outputAspect))
+        let w = h * model.outputAspect
+        return CGRect(x: (size.width-w)/2, y: (size.height-h)/2, width: w, height: h)
+    }
+
+    private func logoFrameForCrop(size: CGSize, aspect: Double) -> CGRect {
+        cropOutputFrame(size: size, document: .zero)
+    }
+
+    private func scalePhoto(factor: Double, point: CGPoint, size: CGSize) {
+        guard let selected = model.selected else { return }
+        let frame = cropOutputFrame(size: size, document: .zero)
+        let old = model.effectiveCrop(for: selected)
+        let rx = min(1, max(0, (point.x-frame.minX)/frame.width))
+        let ry = min(1, max(0, (point.y-frame.minY)/frame.height))
+        guard let current else { return }
+        model.setCrop(PhotoComposition.scaledCrop(old, factor: factor, anchor: CGPoint(x: rx, y: ry),
+                                                  sourceAspect: Double(current.width) / Double(current.height),
+                                                  outputAspect: model.outputAspect))
+    }
+
+    private func panPhoto(delta: CGSize, size: CGSize) {
+        guard let selected = model.selected else { return }
+        let old = model.effectiveCrop(for: selected)
+        let frame = cropOutputFrame(size: size, document: .zero)
+        model.setCrop(SessionCrop(x: old.x - delta.width/frame.width*old.width,
+                                  y: old.y + delta.height/frame.height*old.height,
+                                  width: old.width, height: old.height))
     }
 
     private func logoRect(in frame: CGRect, logo: SessionLogo, asset: CGImage) -> CGRect {
@@ -297,7 +322,26 @@ struct V1WorkspaceView: View {
                                     drawingEnabled: tool == .brush || tool == .eraser,
                                     cursorEnabled: tool == .brush || tool == .eraser,
                                     onCommit: { model.addStroke($0) },
-                                    onViewChange: { model.setCanvasView($0) })
+                                    onViewChange: { model.setCanvasView($0) },
+                                    compositionRect: {
+                                        let r = cropImageRect(size: geo.size, crop: model.effectiveCrop(for: header.url), documentSize: CGSize(width: header.width, height: header.height))
+                                        return CGRect(x: r.minX, y: geo.size.height - r.maxY, width: r.width, height: r.height)
+                                    }(),
+                                    onImageScale: { factor, point in
+                                        scalePhoto(factor: factor, point: CGPoint(x: point.x, y: geo.size.height - point.y), size: geo.size)
+                                    },
+                                    onImagePan: { delta in
+                                        panPhoto(delta: delta, size: geo.size)
+                                    })
+                    } else if model.selected != nil {
+                        VStack(spacing: 10) {
+                            if model.retouchBusy || model.busy { ProgressView() }
+                            Text(t("Восстановление изображения…", "Restoring image…"))
+                                .foregroundStyle(.secondary)
+                            if !model.retouchBusy && !model.busy {
+                                Button(t("Восстановить результат", "Restore result")) { model.restoreCurrentResult() }
+                            }
+                        }
                     } else if !model.busy {
                         VStack(spacing: 10) {
                             Image(systemName: "photo.on.rectangle.angled").font(.system(size: 40)).foregroundStyle(.secondary)
@@ -346,14 +390,8 @@ struct V1WorkspaceView: View {
     @Environment(\.displayScale) private var displayScale
 
     private func viewImageRect(size: CGSize, imageSize: CGSize) -> CGRect {
-        let available = CGRect(origin: .zero, size: size).insetBy(dx: 8, dy: 8)
-        guard available.width > 0, available.height > 0, imageSize.width > 0, imageSize.height > 0 else { return .zero }
-        let fit = min(available.width / imageSize.width, available.height / imageSize.height)
-        let actual = model.canvasView.fit ? fit : (1 / max(1, displayScale)) * CGFloat(max(0.05, model.canvasView.zoom))
-        let w = imageSize.width * actual, h = imageSize.height * actual
-        return CGRect(x: size.width / 2 - CGFloat(model.canvasView.centerX) * w,
-                      y: size.height / 2 - CGFloat(model.canvasView.centerY) * h,
-                      width: w, height: h)
+        guard let selected = model.selected else { return .zero }
+        return cropImageRect(size: size, crop: model.effectiveCrop(for: selected), documentSize: imageSize)
     }
 
     private var fitZoom: Double {
@@ -364,10 +402,7 @@ struct V1WorkspaceView: View {
         return Double(fit) * Double(max(1, displayScale))
     }
     private func cropImageRect(size: CGSize, crop: SessionCrop, documentSize: CGSize) -> CGRect {
-        let available = CGRect(origin: .zero, size: size).insetBy(dx: 24, dy: 24)
-        var fw = max(20, available.width), fh = fw / CGFloat(model.outputAspect)
-        if fh > available.height { fh = max(20, available.height); fw = fh * CGFloat(model.outputAspect) }
-        let frame = CGRect(x: (size.width-fw)/2, y: (size.height-fh)/2, width: fw, height: fh)
+        let frame = cropOutputFrame(size: size, document: documentSize)
         let dw = frame.width / CGFloat(max(0.01, crop.width))
         let dh = frame.height / CGFloat(max(0.01, crop.height))
         return CGRect(x: frame.minX - CGFloat(crop.x)*dw,
@@ -513,14 +548,17 @@ struct V1WorkspaceView: View {
                 }.font(.system(size: 11))
             }.padding(12)
             Divider().overlay(Color(white: 0.22))
-            zoomInspector
-            Divider().overlay(Color(white: 0.22))
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     if let current {
                         section(t("Изображение", "Image"))
                         keyValue(t("Исходный размер", "Source size"), "\(current.width) × \(current.height) px")
                         keyValue(t("Размер экспорта", "Export size"), "\(model.sessionOutputWidth) × \(model.sessionOutputHeight) px")
+                        Button(t("Заполнить", "Fill")) { model.resetCrop() }
+                            .buttonStyle(InspectorButtonStyle())
+                            .help(t("Заполнить жёлтую рамку целиком", "Fill the entire yellow frame"))
+                            .disabled(model.selected == nil)
+
                     }
                     if model.sourceNeedsDecision {
                         Text(t("Исходник изменился. Рецепты сохранены.", "Source changed. Recipes are preserved."))
@@ -593,7 +631,7 @@ struct V1WorkspaceView: View {
             HStack {
                 Text(t("Размер", "Size")).font(.system(size: 11))
                 Slider(value: $model.brushWidth, in: 0.01...0.25)
-                Text("\(Int((model.brushWidth * Double(current?.width ?? 0)).rounded())) px")
+                Text("\(Int((model.brushWidth * Double(min(current?.width ?? 0, current?.height ?? 0))).rounded())) px")
                     .font(.system(size: 10)).monospacedDigit().frame(width: 46)
             }
             Toggle(t("Показывать маску", "Show mask"), isOn: $model.showMask)
@@ -633,22 +671,9 @@ struct V1WorkspaceView: View {
     private var cropControls: some View {
         VStack(alignment: .leading, spacing: 10) {
             section(t("Кадрирование", "Crop"))
-            Text(t("Рамка неподвижна. Перетаскивайте изображение, колесо — масштаб.", "Frame is fixed. Drag the image, scroll to zoom."))
+            Text(t("Рамка постоянная. Перетаскивайте фото; колесо, два пальца или pinch — размер фото.", "Frame is fixed. Drag the image, scroll to zoom."))
                 .font(.system(size: 10)).foregroundStyle(.secondary)
-            if model.crop != nil {
-                HStack {
-                    Button(t("Готово", "Done")) { model.commitCrop(); tool = .brush }
-                        .buttonStyle(InspectorButtonStyle(primary: true))
-                        .keyboardShortcut(.defaultAction)
-                    Button(t("Отмена", "Cancel")) { model.cancelCrop() }
-                        .buttonStyle(InspectorButtonStyle())
-                        .keyboardShortcut(.cancelAction)
-                    Button(t("Сбросить", "Reset")) { model.resetCrop() }
-                        .buttonStyle(InspectorButtonStyle())
-                }.font(.system(size: 11))
-            } else {
-                Button(t("Начать кадрирование", "Start crop")) { model.beginCrop() }
-            }
+
         }
     }
 
@@ -706,26 +731,26 @@ struct V1WorkspaceView: View {
                     Spacer()
                     Button("100%") { setLogoPercent(100) }.font(.system(size: 9))
                 }
-                HStack(spacing: 6) {
-                    Text("X").font(.system(size: 10)).frame(width: 12)
-                    TextField("", value: Binding(get: { logo.x }, set: { model.updateLogo(x: $0) }),
-                              format: .number.precision(.fractionLength(0)))
-                        .textFieldStyle(.roundedBorder).frame(width: 64)
-                    Text("px").font(.system(size: 9)).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Text(t("Перетащите логотип на фото", "Drag the logo on the photo"))
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    Button { model.chooseLogo() } label: {
+                        Image(systemName: "folder").frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(InspectorButtonStyle())
+                    .help(t("Выбрать другой PNG", "Choose another PNG"))
+                    .accessibilityLabel(t("Выбрать другой PNG", "Choose another PNG"))
+                    Button { model.removeLogo() } label: {
+                        Image(systemName: "trash").frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(InspectorButtonStyle())
+                    .help(t("Удалить логотип", "Remove logo"))
+                    .accessibilityLabel(t("Удалить логотип", "Remove logo"))
                 }
-                HStack(spacing: 6) {
-                    Text("Y").font(.system(size: 10)).frame(width: 12)
-                    TextField("", value: Binding(get: { logo.y }, set: { model.updateLogo(y: $0) }),
-                              format: .number.precision(.fractionLength(0)))
-                        .textFieldStyle(.roundedBorder).frame(width: 64)
-                    Text("px").font(.system(size: 9)).foregroundStyle(.secondary)
-                }
-                HStack {
-                    Button(t("Другой PNG…", "Another PNG…")) { model.chooseLogo() }
-                        .buttonStyle(InspectorButtonStyle())
-                    Button(t("Удалить логотип", "Delete logo")) { model.removeLogo() }
-                        .buttonStyle(InspectorButtonStyle())
-                }.font(.system(size: 11))
+                Button(t("Применить ко всем фото", "Apply to all photos")) { model.applyLogoToAll() }
+                    .buttonStyle(InspectorButtonStyle())
+                    .disabled(model.photos.count < 2)
             } else {
                 Button(t("Выбрать PNG-логотип…", "Choose PNG logo…")) { model.chooseLogo() }
                     .buttonStyle(InspectorButtonStyle())
@@ -762,16 +787,21 @@ struct V1WorkspaceView: View {
                     .font(.system(size: 10))
             }
             Button { model.exportPanel(format: exportFormat, quality: exportQuality) } label: {
-                Text(t("Экспорт", "Export")).frame(maxWidth: .infinity)
+                Text(t("Экспорт всех (\(model.photos.count))", "Export all (\(model.photos.count))")).frame(maxWidth: .infinity)
             }.buttonStyle(InspectorButtonStyle(primary: true, height: 36))
-                .disabled(model.photos.isEmpty || model.exportBusy || model.sessionReadOnly != nil || model.sourceNeedsDecision)
+                .disabled(model.photos.isEmpty || model.exportBusy || model.retouchBusy || model.importBusy || model.sessionReadOnly != nil || model.sourceNeedsDecision)
+            if let summary = model.exportSummary {
+                Text(summary).font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
+            }
             if let error = model.exportError {
-                Text(error).font(.system(size: 10)).foregroundStyle(.orange).lineLimit(2)
+                ScrollView { Text(error).font(.system(size: 10)).foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }
+                    .frame(maxHeight: 90)
             }
             if model.exportBusy {
                 HStack {
                     ProgressView().controlSize(.small)
-                    Text("\(model.exportDone)/\(model.exportTotal)").font(.system(size: 10))
+                    Text("\(model.exportProcessed)/\(model.exportTotal) · \(model.exportDone) сохранено").font(.system(size: 10))
                     Spacer(); Button(t("Отмена", "Cancel")) { model.cancelExport() }.font(.system(size: 10))
                 }
             }
@@ -907,6 +937,7 @@ private struct WindowTitleAccessor: NSViewRepresentable {
 
 
 private struct InspectorButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
     var primary = false
     var height: CGFloat = 28
     func makeBody(configuration: Configuration) -> some View {
@@ -921,7 +952,7 @@ private struct InspectorButtonStyle: ButtonStyle {
             )
             .foregroundStyle(primary ? Color.black : Color(white: 0.88))
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .opacity(configuration.isPressed ? 0.78 : 1)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.78 : 1) : 0.38)
     }
 }
 

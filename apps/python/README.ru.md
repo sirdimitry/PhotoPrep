@@ -1,3 +1,5 @@
+> **Архивная Python-версия.** Текущий выпуск — [PhotoPrep Native](../../README.ru.md). Этот документ описывает прежнюю реализацию; Python не входит в новый DMG.
+
 <div align="right">
   <a href="README.md"><img src="https://img.shields.io/badge/English-Read%20in%20English-FACC15?style=for-the-badge&labelColor=17191d" alt="Read in English"></a>
 </div>
