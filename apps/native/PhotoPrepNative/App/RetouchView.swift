@@ -595,6 +595,20 @@ final class CropCanvasView: NSView {
         next.y = min(max(0, next.y), 1 - next.height)
         crop = next; lastPoint = point; onChange?(next); needsDisplay = true
     }
+    override func mouseUp(with event: NSEvent) {
+        lastPoint = nil
+        let frame = frameRect
+        guard frame.width > 0, frame.height > 0 else { return }
+        let thresholdX = 10 / (frame.width / CGFloat(max(0.01, crop.width)))
+        let thresholdY = 10 / (frame.height / CGFloat(max(0.01, crop.height)))
+        var next = crop
+        if abs(next.x) < thresholdX { next.x = 0 }
+        if abs((1 - next.width) - next.x) < thresholdX { next.x = 1 - next.width }
+        if abs(next.y) < thresholdY { next.y = 0 }
+        if abs((1 - next.height) - next.y) < thresholdY { next.y = 1 - next.height }
+        if next != crop { crop = next; onChange?(next); needsDisplay = true }
+    }
+
     override func scrollWheel(with event: NSEvent) {
         guard image != nil else { return }
         let factor = event.deltaY > 0 ? 0.94 : 1.06
