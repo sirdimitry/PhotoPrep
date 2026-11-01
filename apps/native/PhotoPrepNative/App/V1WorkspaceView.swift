@@ -357,14 +357,14 @@ struct V1WorkspaceView: View {
                 Text("· \(model.photos.count)").font(.system(size: 11)).foregroundStyle(.secondary)
                     .lineLimit(1).fixedSize()
                 Spacer()
-                Button { zoomStep(1 / 1.15) } label: { Image(systemName: "minus.magnifyingglass") }
-                Text("\(zoomPercent)%").font(.system(size: 10)).frame(width: 42)
-                Button { zoomStep(1.15) } label: { Image(systemName: "plus.magnifyingglass") }
-                Button("100%") { setZoom(1) }.font(.system(size: 10))
+                Button { zoomStep(1 / 1.15) } label: { Image(systemName: "minus.magnifyingglass") }.fixedSize()
+                Text("\(zoomPercent)%").font(.system(size: 10)).frame(width: 36).fixedSize()
+                Button { zoomStep(1.15) } label: { Image(systemName: "plus.magnifyingglass") }.fixedSize()
+                Button("100%") { setZoom(1) }.font(.system(size: 10)).fixedSize()
                 Button(t("Вписать", "Fit")) {
                     var next = model.canvasView; next.fit = true; next.zoom = 1; next.centerX = 0.5; next.centerY = 0.5
                     model.setCanvasView(next)
-                }.font(.system(size: 10))
+                }.font(.system(size: 10)).fixedSize()
                 Divider().frame(height: 12)
                 Button { step(-1) } label: { Image(systemName: "chevron.left") }.disabled(model.photos.count < 2)
                 Button { step(1) } label: { Image(systemName: "chevron.right") }.disabled(model.photos.count < 2)
@@ -533,9 +533,9 @@ struct V1WorkspaceView: View {
     private var moveControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             section(t("Перемещение", "Move"))
-            Text(t("Перетаскивание изображения доступно в режиме кадрирования.", "Drag the image in crop mode."))
+            Text(t("Перетаскивайте холст. Space — временное перемещение.", "Drag the canvas. Space — temporary pan."))
                 .font(.system(size: 10)).foregroundStyle(.secondary)
-            Text(t("Положение изображения не сбрасывается при смене инструмента.", "Image position is preserved when switching tools."))
+            Text(t("Viewport меняется, кадрирование и рецепт не меняются.", "Only the viewport changes; crop recipe is untouched."))
                 .font(.system(size: 10)).foregroundStyle(.secondary)
         }
     }
