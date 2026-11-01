@@ -310,9 +310,18 @@ final class WorkspaceModel: ObservableObject {
         if let directory = DebugLaunchOptions.panelDirectory { panel.directoryURL = directory }
         #endif
         panel.nameFieldStringValue = sessionURL?.lastPathComponent ?? "Untitled.photoprep.json"
+        if panel.directoryURL == nil {
+            panel.directoryURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        }
         let response = panel.runModal()
         savePanel = nil
-        guard response == .OK, var url = panel.url else { return }
+        guard response == .OK else { return }
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        guard let initial = panel.url ?? documents?.appendingPathComponent(panel.nameFieldStringValue) else {
+            retouchError = "session_save_failed"
+            return
+        }
+        var url = initial
         if !url.lastPathComponent.lowercased().hasSuffix(".photoprep.json") {
             url = url.deletingPathExtension().appendingPathExtension("photoprep.json")
         }
