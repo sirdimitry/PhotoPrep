@@ -117,31 +117,41 @@ private struct V1PhotoInfoButton: View {
     let exportWidth: Int
     let exportHeight: Int
     @State private var showInfo = false
+
     private var format: String { photo.url.pathExtension.uppercased() }
     private var bytes: Int64 {
         (try? photo.url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
     }
+
     var body: some View {
         Button { showInfo.toggle() } label: {
             Image(systemName: "info.circle.fill")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.white, Color.black.opacity(0.8))
-                .padding(3)
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .contentShape(Rectangle())
         .accessibilityLabel("Информация о файле")
         .help("Информация о файле")
-        .sheet(isPresented: $showInfo) {
-            VStack(alignment: .leading, spacing: 7) {
-                Text("Информация о файле").font(.system(size: 14, weight: .semibold))
-                Text(photo.url.lastPathComponent).font(.system(size: 12, weight: .medium))
-                    .lineLimit(3).truncationMode(.middle)
-                Text("\(photo.width) × \(photo.height) · \(format)")
-                Text("Файл: \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))")
-                Text("Экспорт: \(exportWidth) × \(exportHeight)")
-                Button("Закрыть") { showInfo = false }.padding(.top, 6)
-            }.font(.system(size: 12)).padding(18).frame(width: 300, alignment: .leading)
+        .popover(isPresented: $showInfo, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(photo.url.lastPathComponent)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(2).truncationMode(.middle)
+                Divider().overlay(Color(white: 0.3))
+                row("Исходник", "\(photo.width) × \(photo.height) px")
+                row("Формат", format)
+                row("Файл", ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
+                row("Экспорт", "\(exportWidth) × \(exportHeight) px")
+            }.font(.system(size: 11)).padding(14).frame(width: 260, alignment: .leading)
+        }
+    }
+    private func row(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label).foregroundStyle(.secondary)
+            Spacer(minLength: 12)
+            Text(value).multilineTextAlignment(.trailing)
         }
     }
 }
@@ -389,20 +399,21 @@ struct V1WorkspaceView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(model.photos) { photo in
-                        ZStack(alignment: .topTrailing) {
-                            Button { model.selected = photo.url } label: {
-                                VStack(spacing: 3) {
-                                    V1PhotoThumb(photo: photo)
-                                    Text(photo.url.lastPathComponent).font(.system(size: 9)).lineLimit(1)
-                                        .truncationMode(.middle).frame(width: 120, alignment: .leading)
-                                        .foregroundStyle(model.selected == photo.url ? .white : .secondary)
-                                }
-                                .padding(4)
-                                .background(RoundedRectangle(cornerRadius: 6)
-                                    .fill(model.selected == photo.url ? Color.yellow.opacity(0.18) : Color.clear))
-                                .overlay(RoundedRectangle(cornerRadius: 6)
-                                    .stroke(model.selected == photo.url ? Color.yellow : Color.clear, lineWidth: 1))
-                            }.buttonStyle(.plain)
+                        Button { model.selected = photo.url } label: {
+                            VStack(spacing: 3) {
+                                V1PhotoThumb(photo: photo)
+                                Text(photo.url.lastPathComponent).font(.system(size: 9)).lineLimit(1)
+                                    .truncationMode(.middle).frame(width: 120, alignment: .leading)
+                                    .foregroundStyle(model.selected == photo.url ? .white : .secondary)
+                            }
+                            .padding(4)
+                            .background(RoundedRectangle(cornerRadius: 6)
+                                .fill(model.selected == photo.url ? Color.yellow.opacity(0.18) : Color.clear))
+                            .overlay(RoundedRectangle(cornerRadius: 6)
+                                .stroke(model.selected == photo.url ? Color.yellow : Color.clear, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .overlay(alignment: .topTrailing) {
                             V1PhotoInfoButton(photo: photo,
                                               exportWidth: model.sessionOutputWidth,
                                               exportHeight: model.sessionOutputHeight)
@@ -461,17 +472,27 @@ struct V1WorkspaceView: View {
                     SettingsLink { Image(systemName: "gearshape") }
                         .help(t("Настройки оформления", "Appearance settings"))
                 }
-                HStack(spacing: 6) {
-                    Button { model.importPhotos() } label: { Label(t("Открыть фото", "Open Photos"), systemImage: "photo") }
-                        .buttonStyle(.borderedProminent).tint(.yellow).foregroundStyle(.black)
-                        .disabled(model.busy || model.pressure != .normal)
-                    Button { model.importFolder() } label: { Label(t("Открыть папку", "Open Folder"), systemImage: "folder") }
-                        .disabled(model.busy || model.pressure != .normal)
+                VStack(spacing: 6) {
+                    Button { model.importPhotos() } label: {
+                        Label(t("Открыть фото", "Open Photos"), systemImage: "photo")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(InspectorButtonStyle(primary: true))
+                    .disabled(model.busy || model.pressure != .normal)
+                    Button { model.importFolder() } label: {
+                        Label(t("Открыть папку", "Open Folder"), systemImage: "folder")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(InspectorButtonStyle())
+                    .disabled(model.busy || model.pressure != .normal)
                 }.font(.system(size: 11))
                 HStack(spacing: 6) {
-                    Button { step(-1) } label: { Image(systemName: "chevron.left") }.disabled(model.photos.count < 2)
-                    Button { step(1) } label: { Image(systemName: "chevron.right") }.disabled(model.photos.count < 2)
-                    Button { model.selected = nil } label: { Image(systemName: "xmark") }.disabled(model.selected == nil)
+                    Button { step(-1) } label: { Image(systemName: "chevron.left") }
+                        .buttonStyle(InspectorButtonStyle(height: 26)).disabled(model.photos.count < 2)
+                    Button { step(1) } label: { Image(systemName: "chevron.right") }
+                        .buttonStyle(InspectorButtonStyle(height: 26)).disabled(model.photos.count < 2)
+                    Button { model.selected = nil } label: { Image(systemName: "xmark") }
+                        .buttonStyle(InspectorButtonStyle(height: 26)).disabled(model.selected == nil)
                     Spacer()
                 }.font(.system(size: 11))
             }.padding(12)
@@ -522,19 +543,22 @@ struct V1WorkspaceView: View {
         HStack(spacing: 5) {
             Text(t("Масштаб", "Zoom")).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize()
             Spacer(minLength: 2)
-            Button { zoomStep(1 / 1.15) } label: { Image(systemName: "minus.magnifyingglass") }.fixedSize()
+            Button { zoomStep(1 / 1.15) } label: { Image(systemName: "minus.magnifyingglass") }
+                .buttonStyle(InspectorButtonStyle(height: 26)).fixedSize()
             Text("\(zoomPercent)%").font(.system(size: 10, weight: .medium)).frame(width: 38)
-            Button { zoomStep(1.15) } label: { Image(systemName: "plus.magnifyingglass") }.fixedSize()
-            Button("100%") { setZoom(1) }.font(.system(size: 10)).fixedSize()
+            Button { zoomStep(1.15) } label: { Image(systemName: "plus.magnifyingglass") }
+                .buttonStyle(InspectorButtonStyle(height: 26)).fixedSize()
+            Button("100%") { setZoom(1) }.buttonStyle(InspectorButtonStyle(height: 26)).fixedSize()
             ViewThatFits(in: .horizontal) {
                 Button(t("Вписать", "Fit")) {
                     var next = model.canvasView; next.fit = true; next.zoom = 1; next.centerX = 0.5; next.centerY = 0.5
                     model.setCanvasView(next)
-                }.font(.system(size: 10)).fixedSize()
+                }.buttonStyle(InspectorButtonStyle(height: 26)).font(.system(size: 10)).fixedSize()
                 Button {
                     var next = model.canvasView; next.fit = true; next.zoom = 1; next.centerX = 0.5; next.centerY = 0.5
                     model.setCanvasView(next)
                 } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                .buttonStyle(InspectorButtonStyle(height: 26))
                 .help(t("Вписать", "Fit"))
                 .accessibilityLabel(t("Вписать", "Fit"))
             }
@@ -561,12 +585,14 @@ struct V1WorkspaceView: View {
             Toggle(t("Показывать маску", "Show mask"), isOn: $model.showMask)
                 .font(.system(size: 11))
             HStack {
-                Button(t("Отменить штрих", "Undo stroke")) { model.undoLastStroke() }.disabled(!model.canUndoStroke)
-                Button(t("Очистить", "Clear")) { model.clearMask() }.disabled(model.strokes.isEmpty || model.retouchBusy)
+                Button(t("Отменить штрих", "Undo stroke")) { model.undoLastStroke() }
+                    .buttonStyle(InspectorButtonStyle()).disabled(!model.canUndoStroke)
+                Button(t("Очистить", "Clear")) { model.clearMask() }
+                    .buttonStyle(InspectorButtonStyle()).disabled(model.strokes.isEmpty || model.retouchBusy)
             }.font(.system(size: 11))
             Button { model.processMask() } label: {
                 Text(t("Удалить выделенное", "Remove selection")).frame(maxWidth: .infinity)
-            }.buttonStyle(.borderedProminent).tint(.yellow).foregroundStyle(.black)
+            }.buttonStyle(InspectorButtonStyle(primary: true, height: 32))
                 .disabled(!model.canProcess)
             if model.retouchBusy || model.busy {
                 HStack(spacing: 6) {
@@ -598,10 +624,13 @@ struct V1WorkspaceView: View {
             if model.crop != nil {
                 HStack {
                     Button(t("Готово", "Done")) { model.commitCrop(); tool = .brush }
+                        .buttonStyle(InspectorButtonStyle(primary: true))
                         .keyboardShortcut(.defaultAction)
                     Button(t("Отмена", "Cancel")) { model.cancelCrop() }
+                        .buttonStyle(InspectorButtonStyle())
                         .keyboardShortcut(.cancelAction)
                     Button(t("Сбросить", "Reset")) { model.resetCrop() }
+                        .buttonStyle(InspectorButtonStyle())
                 }.font(.system(size: 11))
             } else {
                 Button(t("Начать кадрирование", "Start crop")) { model.beginCrop() }
@@ -672,11 +701,15 @@ struct V1WorkspaceView: View {
                 HStack { Text("Y").font(.system(size: 10)); Slider(value: Binding(get: { logo.y }, set: { model.updateLogo(y: $0) }), in: 0...1) }
                 HStack {
                     Button(t("Применить ко всем", "Apply to all")) { model.applyLogoToAll() }
+                        .buttonStyle(InspectorButtonStyle())
                     Button(t("Убрать", "Remove")) { model.removeLogo() }
+                        .buttonStyle(InspectorButtonStyle())
                 }.font(.system(size: 11))
-                Button(t("Другой PNG…", "Another PNG…")) { model.chooseLogo() }.font(.system(size: 11))
+                Button(t("Другой PNG…", "Another PNG…")) { model.chooseLogo() }
+                    .buttonStyle(InspectorButtonStyle())
             } else {
                 Button(t("Выбрать PNG-логотип…", "Choose PNG logo…")) { model.chooseLogo() }
+                    .buttonStyle(InspectorButtonStyle())
                 Text(t("Локальный PNG с alpha. Применяется к одному фото или коллекции.", "Local PNG with alpha. Applies to one photo or collection."))
                     .font(.system(size: 10)).foregroundStyle(.secondary)
             }
@@ -699,17 +732,19 @@ struct V1WorkspaceView: View {
         VStack(alignment: .leading, spacing: 9) {
             Divider().overlay(Color(white: 0.22))
             section(t("Экспорт", "Export"))
-            Picker("", selection: $exportFormat) {
-                Text("PNG").tag(ExportFormat.png); Text("JPEG").tag(ExportFormat.jpeg)
-            }.pickerStyle(.segmented).labelsHidden()
+            HStack(spacing: 6) {
+                Button("PNG") { exportFormat = .png }
+                    .buttonStyle(InspectorButtonStyle(primary: exportFormat == .png, height: 26))
+                Button("JPEG") { exportFormat = .jpeg }
+                    .buttonStyle(InspectorButtonStyle(primary: exportFormat == .jpeg, height: 26))
+            }
             if exportFormat == .jpeg {
                 HStack { Text(t("Качество", "Quality")); Slider(value: $exportQuality, in: 0.5...1) }
                     .font(.system(size: 10))
             }
             Button { model.exportPanel(format: exportFormat, quality: exportQuality) } label: {
                 Text(t("Экспорт", "Export")).frame(maxWidth: .infinity)
-            }.buttonStyle(.borderedProminent).tint(.yellow).foregroundStyle(.black)
-                .controlSize(.large)
+            }.buttonStyle(InspectorButtonStyle(primary: true, height: 36))
                 .disabled(model.photos.isEmpty || model.exportBusy || model.sessionReadOnly != nil || model.sourceNeedsDecision)
             if let error = model.exportError {
                 Text(error).font(.system(size: 10)).foregroundStyle(.orange).lineLimit(2)
@@ -851,6 +886,25 @@ private struct WindowTitleAccessor: NSViewRepresentable {
     }
 }
 
+
+private struct InspectorButtonStyle: ButtonStyle {
+    var primary = false
+    var height: CGFloat = 28
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 11, weight: .medium))
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .frame(height: height)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(primary ? Color.yellow : Color(white: configuration.isPressed ? 0.28 : 0.21))
+            )
+            .foregroundStyle(primary ? Color.black : Color(white: 0.88))
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .opacity(configuration.isPressed ? 0.78 : 1)
+    }
+}
 
 private struct LogoGlyph: View {
     var body: some View {
