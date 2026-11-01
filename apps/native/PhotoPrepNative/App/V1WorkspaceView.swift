@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+
 enum V1PanelTool: String, CaseIterable, Identifiable {
     case brush, eraser, crop, move, logo, comparison
     var id: String { rawValue }
@@ -181,17 +182,11 @@ struct V1WorkspaceView: View {
         .background(Color(white: 0.16))
         .tint(.yellow)
         .background(WindowCloseGuardView(workspace: model))
+        .background(WindowTitleAccessor(title: "PhotoPrep Native v1" + (current.map { " — \($0.url.lastPathComponent)" } ?? "")))
     }
 
     private var header: some View {
         HStack(spacing: 10) {
-            Text("PhotoPrep Native").font(.system(size: 17, weight: .semibold))
-            Text("v1").font(.system(size: 9, weight: .bold))
-                .padding(.horizontal, 5).padding(.vertical, 2)
-                .background(Color.yellow.opacity(0.18)).foregroundStyle(.yellow)
-                .clipShape(Capsule())
-            Text(current?.url.lastPathComponent ?? "—")
-                .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             Spacer(minLength: 12)
             Button { model.importPhotos() } label: { Label(t("Открыть фото", "Open Photos"), systemImage: "photo") }
                 .buttonStyle(.borderedProminent).tint(.yellow).foregroundStyle(.black)
@@ -399,7 +394,6 @@ struct V1WorkspaceView: View {
                 Button { step(1) } label: { Image(systemName: "chevron.right") }.disabled(model.photos.count < 2)
                 Button { model.selected = nil } label: { Image(systemName: "xmark") }.disabled(model.selected == nil)
             }.font(.system(size: 11)).padding(.horizontal, 12)
-            statusBar
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(model.photos) { photo in
@@ -717,5 +711,18 @@ private struct V1CanvasGuides: View {
             context.stroke(Path(frame.insetBy(dx:-1,dy:-1)), with: .color(.black.opacity(0.8)), lineWidth: 3)
             context.stroke(Path(frame), with: .color(.yellow), lineWidth: 2)
         }.allowsHitTesting(false)
+    }
+}
+
+
+private struct WindowTitleAccessor: NSViewRepresentable {
+    let title: String
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { view.window?.title = title }
+        return view
+    }
+    func updateNSView(_ view: NSView, context: Context) {
+        DispatchQueue.main.async { view.window?.title = title }
     }
 }

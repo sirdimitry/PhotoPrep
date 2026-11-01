@@ -111,12 +111,6 @@ struct PhotoPrepNativeApp: App {
                     .keyboardShortcut("o").disabled(workspace.busy || workspace.pressure != .normal)
                 Button(language == "ru" ? "Новая коллекция" : "New Collection") { workspace.newCollection() }
                     .keyboardShortcut("n")
-                Divider()
-                Button(language == "ru" ? "Открыть набор…" : "Open Workspace…") { workspace.openSessionPanel() }
-                    .keyboardShortcut("o", modifiers: [.command, .shift])
-                Button(language == "ru" ? "Сохранить набор…" : "Save Workspace…") { workspace.saveSessionPanel() }
-                    .keyboardShortcut("s")
-                    .disabled(workspace.sessionReadOnly != nil || workspace.photos.isEmpty)
             }
         }
         Settings {
