@@ -43,18 +43,28 @@ public enum OutputEditing {
 
     private static func weights(start: Double, span: Double, count: Int, limit: Int) -> [[(Int, Double)]] {
         let scale = span / Double(count)
-        return (0..<count).map { output in
+        var result: [[(Int, Double)]] = []
+        result.reserveCapacity(count)
+        for output in 0..<count {
+            var taps: [(Int, Double)] = []
             if scale <= 1 {
                 let center = start + (Double(output) + 0.5) * scale - 0.5
-                let low = Int(floor(center)), fraction = center - floor(center)
-                return [(min(limit-1, max(0, low)), 1-fraction),
-                        (min(limit-1, max(0, low+1)), fraction)]
+                let low = Int(floor(center))
+                let fraction = center - floor(center)
+                taps.append((min(limit - 1, max(0, low)), 1 - fraction))
+                taps.append((min(limit - 1, max(0, low + 1)), fraction))
+            } else {
+                let low = start + Double(output) * scale
+                let high = low + scale
+                for index in Int(floor(low))..<Int(ceil(high)) {
+                    let overlap = min(high, Double(index + 1)) - max(low, Double(index))
+                    let weight = max(0, overlap) / scale
+                    taps.append((min(limit - 1, max(0, index)), weight))
+                }
             }
-            let low = start + Double(output) * scale, high = low + scale
-            return (Int(floor(low))..<Int(ceil(high))).map { index in
-                (min(limit-1, max(0, index)), max(0, min(high, Double(index+1)) - max(low, Double(index))) / scale)
-            }
+            result.append(taps)
         }
+        return result
     }
 
     private static func areaCrop(_ source: StraightImage, sx: Double, sy: Double, sw: Double, sh: Double,
