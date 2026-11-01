@@ -28,13 +28,7 @@ enum DebugLaunchOptions {
 final class PhotoPrepAppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let workspace = WorkspaceModel.current else { return .terminateNow }
-        switch workspace.confirmUnsaved("Завершение приложения") {
-        case .discard: return .terminateNow
-        case .cancel: return .terminateCancel
-        case .save:
-            workspace.saveSessionPanel()
-            return .terminateCancel
-        }
+        return workspace.confirmTermination() ? .terminateNow : .terminateCancel
     }
 }
 

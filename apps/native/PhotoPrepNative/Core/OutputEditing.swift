@@ -87,15 +87,13 @@ public enum OutputEditing {
                                  width: Int, height: Int,
                                  isCancelled: () -> Bool = { false }) throws -> StraightImage {
         guard width > 0, height > 0 else { throw OutputEditingError.allocation }
-        let areaInset = logo.mode == "template" ? 0.0 : 0.03
-        let area = CGRect(x: Double(width) * areaInset, y: Double(height) * areaInset,
-                          width: Double(width) * (1 - 2 * areaInset),
-                          height: Double(height) * (1 - 2 * areaInset))
         let aspect = Double(asset.height) / Double(max(1, asset.width))
         let lw = Double(width) * logo.width
         let lh = lw * aspect
-        let lx = area.minX + (area.width - lw) * logo.x
-        let ly = area.minY + (area.height - lh) * logo.y
+        let cx = Double(width) / 2 + logo.x
+        let cy = Double(height) / 2 + logo.y
+        let lx = cx - lw / 2
+        let ly = cy - lh / 2
         var logoPixels = [UInt8](repeating: 0, count: asset.width * asset.height * 4)
         guard let ctx = CGContext(data: &logoPixels, width: asset.width, height: asset.height,
                                   bitsPerComponent: 8, bytesPerRow: asset.width * 4,

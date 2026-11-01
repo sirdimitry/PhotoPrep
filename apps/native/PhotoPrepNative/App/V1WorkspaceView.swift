@@ -316,6 +316,7 @@ struct V1WorkspaceView: View {
                     if let logo = model.logo, logo.enabled, logo.opacity > 0, let asset = model.logoAsset {
                         V1LogoOverlay(logo: logo, asset: asset,
                                       frame: logoFrame(imageRect: ir, crop: model.effectiveCrop(for: selected)),
+                                      outputWidth: CGFloat(model.sessionOutputWidth),
                                       editable: tool == .logo,
                                       onMove: { dx, dy, frameRect, logoRect in
                                           moveLogo(dx: dx, dy: dy, frame: frameRect, logoRect: logoRect)
@@ -326,6 +327,7 @@ struct V1WorkspaceView: View {
                    let asset = model.logoAsset {
                     V1LogoOverlay(logo: logo, asset: asset,
                                   frame: logoFrameForCrop(size: geo.size, aspect: model.outputAspect),
+                                  outputWidth: CGFloat(model.sessionOutputWidth),
                                   editable: tool == .logo,
                                   onMove: { dx, dy, frameRect, logoRect in
                                       moveLogo(dx: dx, dy: dy, frame: frameRect, logoRect: logoRect)
@@ -399,26 +401,48 @@ struct V1WorkspaceView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(model.photos) { photo in
-                        Button { model.selected = photo.url } label: {
-                            VStack(spacing: 3) {
-                                V1PhotoThumb(photo: photo)
-                                Text(photo.url.lastPathComponent).font(.system(size: 9)).lineLimit(1)
-                                    .truncationMode(.middle).frame(width: 120, alignment: .leading)
-                                    .foregroundStyle(model.selected == photo.url ? .white : .secondary)
-                            }
-                            .padding(4)
-                            .background(RoundedRectangle(cornerRadius: 6)
-                                .fill(model.selected == photo.url ? Color.yellow.opacity(0.18) : Color.clear))
-                            .overlay(RoundedRectangle(cornerRadius: 6)
-                                .stroke(model.selected == photo.url ? Color.yellow : Color.clear, lineWidth: 1))
+                        ZStack {
+                            V1PhotoThumb(photo: photo)
+                                .contentShape(Rectangle())
+                                .onTapGesture { model.selected = photo.url }
+                            LinearGradient(colors: [.clear, .black.opacity(0.65)],
+                                           startPoint: .top, endPoint: .bottom)
+                                .frame(height: 24).frame(maxHeight: .infinity, alignment: .bottom)
+                                .allowsHitTesting(false)
+                            Text(photo.url.lastPathComponent)
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(.white)
+                                .lineLimit(1).truncationMode(.middle)
+                                .padding(.leading, 4).padding(.trailing, 26)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .frame(maxHeight: .infinity, alignment: .bottom)
+                                .allowsHitTesting(false)
+                            VStack {
+                                HStack {
+                                    Spacer()
+                                    Button { model.closePhoto(photo.url) } label: {
+                                        Image(systemName: "xmark")
+                                            .font(.system(size: 9, weight: .bold))
+                                            .foregroundStyle(.white)
+                                            .frame(width: 22, height: 22)
+                                            .background(Circle().fill(.black.opacity(0.58)))
+                                            .contentShape(Circle())
+                                    }.buttonStyle(.plain)
+                                        .help(t("Закрыть фотографию", "Close photo"))
+                                }
+                                Spacer()
+                                HStack {
+                                    Spacer()
+                                    V1PhotoInfoButton(photo: photo,
+                                                      exportWidth: model.sessionOutputWidth,
+                                                      exportHeight: model.sessionOutputHeight)
+                                }
+                            }.padding(3)
                         }
-                        .buttonStyle(.plain)
-                        .overlay(alignment: .topTrailing) {
-                            V1PhotoInfoButton(photo: photo,
-                                              exportWidth: model.sessionOutputWidth,
-                                              exportHeight: model.sessionOutputHeight)
-                                .padding(3)
-                        }
+                        .frame(width: 120, height: 80)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6)
+                            .stroke(model.selected == photo.url ? Color.yellow : Color.clear, lineWidth: 1))
                     }
                 }.padding(.horizontal, 12)
             }.frame(height: 96)
@@ -486,15 +510,6 @@ struct V1WorkspaceView: View {
                     .buttonStyle(InspectorButtonStyle())
                     .disabled(model.busy || model.pressure != .normal)
                 }.font(.system(size: 11))
-                HStack(spacing: 6) {
-                    Button { step(-1) } label: { Image(systemName: "chevron.left") }
-                        .buttonStyle(InspectorButtonStyle(height: 26)).disabled(model.photos.count < 2)
-                    Button { step(1) } label: { Image(systemName: "chevron.right") }
-                        .buttonStyle(InspectorButtonStyle(height: 26)).disabled(model.photos.count < 2)
-                    Button { model.selected = nil } label: { Image(systemName: "xmark") }
-                        .buttonStyle(InspectorButtonStyle(height: 26)).disabled(model.selected == nil)
-                    Spacer()
-                }.font(.system(size: 11))
             }.padding(12)
             Divider().overlay(Color(white: 0.22))
             zoomInspector
@@ -530,12 +545,10 @@ struct V1WorkspaceView: View {
 
     private func moveLogo(dx: CGFloat, dy: CGFloat, frame: CGRect, logoRect: CGRect) {
         guard var value = model.logo else { return }
-        let area = frame.insetBy(dx: frame.width * (value.mode == "template" ? 0 : 0.03),
-                                dy: frame.height * (value.mode == "template" ? 0 : 0.03))
-        let availableX = area.width - logoRect.width
-        let availableY = area.height - logoRect.height
-        if abs(availableX) > 1 { value.x = min(1, max(0, value.x + Double(dx / availableX))) }
-        if abs(availableY) > 1 { value.y = min(1, max(0, value.y + Double(dy / availableY))) }
+        let sx = Double(model.sessionOutputWidth) / max(1, Double(frame.width))
+        let sy = Double(model.sessionOutputHeight) / max(1, Double(frame.height))
+        value.x += Double(dx) * sx
+        value.y += Double(dy) * sy
         model.updateLogo(x: value.x, y: value.y)
     }
 
@@ -676,10 +689,6 @@ struct V1WorkspaceView: View {
             if let logo = model.logo {
                 Text(URL(fileURLWithPath: logo.path).lastPathComponent).font(.system(size: 10)).lineLimit(1)
                     .truncationMode(.middle)
-                Picker("", selection: Binding(get: { logo.mode }, set: { model.updateLogo(mode: $0) })) {
-                    Text(t("Логотип", "Logo")).tag("logo")
-                    Text(t("Накладка", "Overlay")).tag("template")
-                }.pickerStyle(.segmented).labelsHidden()
                 Toggle(t("Показывать", "Visible"), isOn: Binding(get: { logo.enabled }, set: { model.updateLogo(enabled: $0) }))
                     .font(.system(size: 11))
                 HStack(spacing: 6) {
@@ -696,9 +705,24 @@ struct V1WorkspaceView: View {
                     Spacer()
                     Button("100%") { setLogoPercent(100) }.font(.system(size: 9))
                 }
-                HStack { Text(t("Прозрачность", "Opacity")).font(.system(size: 11)); Slider(value: Binding(get: { logo.opacity }, set: { model.updateLogo(opacity: $0) }), in: 0...1) }
-                HStack { Text("X").font(.system(size: 10)); Slider(value: Binding(get: { logo.x }, set: { model.updateLogo(x: $0) }), in: 0...1) }
-                HStack { Text("Y").font(.system(size: 10)); Slider(value: Binding(get: { logo.y }, set: { model.updateLogo(y: $0) }), in: 0...1) }
+                HStack(spacing: 6) {
+                    Text("X").font(.system(size: 10)).frame(width: 12)
+                    TextField("", value: Binding(get: { logo.x }, set: { model.updateLogo(x: $0) }),
+                              format: .number.precision(.fractionLength(0)))
+                        .textFieldStyle(.roundedBorder).frame(width: 64)
+                    Text("px").font(.system(size: 9)).foregroundStyle(.secondary)
+                    Button("−10") { model.updateLogo(x: logo.x - 10) }.buttonStyle(InspectorButtonStyle(height: 22))
+                    Button("+10") { model.updateLogo(x: logo.x + 10) }.buttonStyle(InspectorButtonStyle(height: 22))
+                }
+                HStack(spacing: 6) {
+                    Text("Y").font(.system(size: 10)).frame(width: 12)
+                    TextField("", value: Binding(get: { logo.y }, set: { model.updateLogo(y: $0) }),
+                              format: .number.precision(.fractionLength(0)))
+                        .textFieldStyle(.roundedBorder).frame(width: 64)
+                    Text("px").font(.system(size: 9)).foregroundStyle(.secondary)
+                    Button("−10") { model.updateLogo(y: logo.y - 10) }.buttonStyle(InspectorButtonStyle(height: 22))
+                    Button("+10") { model.updateLogo(y: logo.y + 10) }.buttonStyle(InspectorButtonStyle(height: 22))
+                }
                 HStack {
                     Button(t("Применить ко всем", "Apply to all")) { model.applyLogoToAll() }
                         .buttonStyle(InspectorButtonStyle())
@@ -708,6 +732,13 @@ struct V1WorkspaceView: View {
                 Button(t("Другой PNG…", "Another PNG…")) { model.chooseLogo() }
                     .buttonStyle(InspectorButtonStyle())
             } else {
+                if let saved = model.persistedLogoName {
+                    Text(saved).font(.system(size: 10)).lineLimit(1).truncationMode(.middle)
+                    Button(t("Применить сохранённый логотип", "Apply saved logo")) { model.applyPersistedLogo() }
+                        .buttonStyle(InspectorButtonStyle(primary: true))
+                    Text(t("Логотип не накладывается автоматически на новые фото.", "The logo is not applied automatically to new photos."))
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                }
                 Button(t("Выбрать PNG-логотип…", "Choose PNG logo…")) { model.chooseLogo() }
                     .buttonStyle(InspectorButtonStyle())
                 Text(t("Локальный PNG с alpha. Применяется к одному фото или коллекции.", "Local PNG with alpha. Applies to one photo or collection."))
@@ -766,6 +797,7 @@ private struct V1LogoOverlay: View {
     let logo: SessionLogo
     let asset: CGImage
     let frame: CGRect
+    let outputWidth: CGFloat
     let editable: Bool
     let onMove: (CGFloat, CGFloat, CGRect, CGRect) -> Void
     @State private var hovering = false
@@ -773,15 +805,14 @@ private struct V1LogoOverlay: View {
 
     var body: some View {
         let aw = CGFloat(asset.width), ah = CGFloat(asset.height)
-        let inset = logo.mode == "template" ? 0.0 : 0.03
-        let area = frame.insetBy(dx: frame.width * inset, dy: frame.height * inset)
         let w = frame.width * CGFloat(logo.width)
         let h = w * ah / max(1, aw)
-        let rect = CGRect(x: area.minX + (area.width-w) * CGFloat(logo.x),
-                          y: area.minY + (area.height-h) * CGFloat(logo.y), width: w, height: h)
+        let sx = frame.width / max(1, outputWidth)
+        let cx = frame.midX + CGFloat(logo.x) * sx
+        let cy = frame.midY + CGFloat(logo.y) * sx
+        let rect = CGRect(x: cx - w/2, y: cy - h/2, width: w, height: h)
         ZStack {
             Canvas { context, _ in
-                context.opacity = logo.opacity
                 context.draw(Image(decorative: asset, scale: 1), in: rect)
             }.allowsHitTesting(false)
             if editable && hovering {

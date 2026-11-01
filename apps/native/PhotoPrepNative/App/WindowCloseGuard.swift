@@ -6,13 +6,11 @@ final class WindowCloseGuard: NSObject, NSWindowDelegate {
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard let workspace else { return true }
-        switch workspace.confirmUnsaved("Закрытие окна") {
-        case .discard: return true
-        case .save:
-            workspace.saveSessionPanel()
+        if workspace.confirmTermination() {
+            NSApp.terminate(nil)
             return false
-        case .cancel: return false
         }
+        return false
     }
 }
 

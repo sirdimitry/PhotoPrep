@@ -274,14 +274,19 @@ final class BrushCanvasView: NSView {
     override func scrollWheel(with event: NSEvent) {
         guard image != nil else { return }
         if event.hasPreciseScrollingDeltas {
-            let rect = imageRect
-            guard rect.width > 0, rect.height > 0 else { return }
-            var next = viewport
-            next.fit = false
-            next.zoom = viewport.fit ? fitZoom : viewport.zoom
-            next.centerX = min(1, max(0, viewport.centerX + Double(event.scrollingDeltaX / rect.width)))
-            next.centerY = min(1, max(0, viewport.centerY + Double(event.scrollingDeltaY / rect.height)))
-            viewport = next; onViewChange?(next); needsDisplay = true
+            if abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) {
+                let rect = imageRect
+                guard rect.width > 0, rect.height > 0 else { return }
+                var next = viewport
+                next.fit = false
+                next.zoom = viewport.fit ? fitZoom : viewport.zoom
+                next.centerX = min(1, max(0, viewport.centerX + Double(event.scrollingDeltaX / rect.width)))
+                next.centerY = min(1, max(0, viewport.centerY + Double(event.scrollingDeltaY / rect.height)))
+                viewport = next; onViewChange?(next); needsDisplay = true
+            } else {
+                let factor = exp(Double(event.scrollingDeltaY) * 0.012)
+                zoom(by: min(1.6, max(0.6, factor)), at: convert(event.locationInWindow, from: nil))
+            }
         } else {
             zoom(by: event.scrollingDeltaY > 0 ? 1.1 : 0.9, at: convert(event.locationInWindow, from: nil))
         }
@@ -610,15 +615,20 @@ final class CropCanvasView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        guard image != nil else { return }
+        guard image != nil, event.modifierFlags.contains(.command) else { return }
         let factor = event.deltaY > 0 ? 0.94 : 1.06
-        let cx = crop.x + crop.width / 2, cy = crop.y + crop.height / 2
+        let frame = frameRect
+        guard frame.width > 1, frame.height > 1 else { return }
+        let p = convert(event.locationInWindow, from: nil)
+        let rx = min(1, max(0, (p.x - frame.minX) / frame.width))
+        let ryTop = min(1, max(0, (frame.maxY - p.y) / frame.height))
         var next = crop
-        next.width = min(1, max(0.02, crop.width * factor))
-        next.height = min(1, next.width * (Double(image!.width) / Double(image!.height)) / outputAspect)
-        if next.height > 1 { next.height = 1; next.width = outputAspect * (Double(image!.height) / Double(image!.width)) }
-        next.x = min(max(0, cx - next.width / 2), 1 - next.width)
-        next.y = min(max(0, cy - next.height / 2), 1 - next.height)
+        next.width = min(4, max(0.02, crop.width * factor))
+        next.height = next.width * (Double(image!.width) / Double(image!.height)) / outputAspect
+        guard next.width.isFinite, next.height.isFinite, next.height > 0, next.height < 8 else { return }
+        next.x = crop.x + rx * (crop.width - next.width)
+        next.y = crop.y + ryTop * (crop.height - next.height)
+        guard next.x.isFinite, next.y.isFinite else { return }
         crop = next; onChange?(next); needsDisplay = true
     }
 }

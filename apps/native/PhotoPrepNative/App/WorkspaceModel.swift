@@ -168,9 +168,6 @@ final class WorkspaceModel: ObservableObject {
             return
         }
         if state.sourceIdentity == nil, let current { state.sourceIdentity = current }
-        if state.logo == nil, let persistedLogo {
-            state.logo = persistedLogo
-        }
         state.sourceChanged = false
         editStates[url] = state
         sourceNeedsDecision = false
@@ -578,6 +575,32 @@ final class WorkspaceModel: ObservableObject {
         }
     }
 
+    func closePhoto(_ url: URL) {
+        guard !busy else { return }
+        let wasSelected = selected == url
+        let index = photos.firstIndex { $0.url == url }
+        photos.removeAll { $0.url == url }
+        editStates.removeValue(forKey: url)
+        if wasSelected {
+            if let index, !photos.isEmpty {
+                selected = photos[min(index, photos.count - 1)].url
+            } else {
+                selected = photos.first?.url
+            }
+        } else if photos.isEmpty {
+            selected = nil
+        }
+        if photos.isEmpty {
+            preview = nil
+            resultImage = nil
+            strokes = []
+            crop = nil
+            logo = nil
+            logoAsset = nil
+        }
+        isDirty = !photos.isEmpty
+    }
+
     private func requestPreview() {
         cancelPreview()
         preview = nil
@@ -614,6 +637,27 @@ final class WorkspaceModel: ObservableObject {
         previewTask?.cancel()
         previewTask = nil
         previewBusy = false
+    }
+
+    private(set) var allowTermination = false
+    private var terminationDialogOpen = false
+
+    @MainActor
+    func confirmTermination() -> Bool {
+        if allowTermination { return true }
+        guard !terminationDialogOpen else { return false }
+        terminationDialogOpen = true
+        defer { terminationDialogOpen = false }
+        let alert = NSAlert()
+        alert.messageText = "Закрыть PhotoPrep?"
+        alert.informativeText = "Завершить работу и закрыть приложение? Несохранённые результаты обработки будут потеряны."
+        alert.addButton(withTitle: "Нет")
+        alert.addButton(withTitle: "Да")
+        alert.alertStyle = .warning
+        NSApp.activate(ignoringOtherApps: true)
+        let approved = alert.runModal() == .alertSecondButtonReturn
+        if approved { allowTermination = true }
+        return approved
     }
 
     /// Used by window close/termination and destructive collection actions.
@@ -674,11 +718,7 @@ final class WorkspaceModel: ObservableObject {
     }
 
     func newCollection() {
-        switch confirmUnsaved("Новая коллекция") {
-        case .discard: clear()
-        case .save: saveSessionPanel()
-        case .cancel: return
-        }
+        clear()
     }
 
     func suspend() {
@@ -1078,10 +1118,10 @@ final class WorkspaceModel: ObservableObject {
         guard let selected, var value = logo else { return }
         if let width { value.width = min(100, max(0.0001, width)) }
         if let opacity { value.opacity = min(1, max(0, opacity)) }
-        if let x { value.x = min(1, max(0, x)) }
-        if let y { value.y = min(1, max(0, y)) }
+        if let x { value.x = x }
+        if let y { value.y = y }
         if let enabled { value.enabled = enabled }
-        if let mode { value.mode = mode; loadLogoAsset(value) }
+        if mode != nil { value.mode = "logo" }
         var state = editStates[selected] ?? PhotoEditState()
         state.logo = value
         editStates[selected] = state
@@ -1107,9 +1147,23 @@ final class WorkspaceModel: ObservableObject {
         editStates[selected] = state
         logo = nil
         logoAsset = nil
-        persistedLogo = nil
-        persistedLogoBookmark = nil
-        UserDefaults.standard.removeObject(forKey: Self.logoDefaultsKey)
+        isDirty = true
+    }
+
+    var hasPersistedLogo: Bool { persistedLogo != nil }
+    var persistedLogoName: String? { persistedLogo.map { URL(fileURLWithPath: $0.path).lastPathComponent } }
+
+    func applyPersistedLogo() {
+        guard let selected, let persistedLogo else { return }
+        var value = persistedLogo
+        value.enabled = true
+        value.mode = "logo"
+        value.opacity = 1
+        var state = editStates[selected] ?? PhotoEditState()
+        state.logo = value
+        editStates[selected] = state
+        logo = value
+        loadLogoAsset(value)
         isDirty = true
     }
 
@@ -1351,8 +1405,42 @@ final class WorkspaceModel: ObservableObject {
                                                  rect: prepared.rect, isCancelled: { cancellation.isCancelled })
     }
 
+    var selectedHasVisibleBranding: Bool {
+        guard let selected, let logo = editStates[selected]?.logo, logo.enabled,
+              logo.opacity > 0, let asset = logoAsset, asset.width > 0 else { return false }
+        let w = Double(sessionOutputWidth) * logo.width
+        let h = w * Double(asset.height) / Double(max(1, asset.width))
+        let lx = Double(sessionOutputWidth) / 2 + logo.x - w / 2
+        let ly = Double(sessionOutputHeight) / 2 + logo.y - h / 2
+        return lx < Double(sessionOutputWidth) && lx + w > 0 &&
+               ly < Double(sessionOutputHeight) && ly + h > 0
+    }
+
+    var selectedCropHasEmptyArea: Bool {
+        guard let selected, let crop = editStates[selected]?.crop else { return false }
+        return crop.x < 0 || crop.y < 0 || crop.x + crop.width > 1.000001 || crop.y + crop.height > 1.000001
+    }
+
     func exportPanel(format: ExportFormat, quality: Double) {
         guard !exportBusy, !photos.isEmpty else { return }
+        if selectedCropHasEmptyArea {
+            let alert = NSAlert()
+            alert.messageText = "Кадр выходит за фотографию"
+            alert.informativeText = "Часть выходного кадра не содержит изображения. Вернитесь к кадрированию и уменьшите кадр."
+            alert.addButton(withTitle: "Вернуться")
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+            return
+        }
+        if !selectedHasVisibleBranding {
+            let alert = NSAlert()
+            alert.messageText = "Нет брендирования"
+            alert.informativeText = "На фотографию не добавлен логотип. Экспортировать без брендирования?"
+            alert.addButton(withTitle: "Нет")
+            alert.addButton(withTitle: "Да")
+            NSApp.activate(ignoringOtherApps: true)
+            guard alert.runModal() == .alertSecondButtonReturn else { return }
+        }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
