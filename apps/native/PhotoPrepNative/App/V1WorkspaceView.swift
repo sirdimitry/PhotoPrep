@@ -377,10 +377,18 @@ struct V1WorkspaceView: View {
                 Text("\(zoomPercent)%").font(.system(size: 10)).frame(width: 36).fixedSize()
                 Button { zoomStep(1.15) } label: { Image(systemName: "plus.magnifyingglass") }.fixedSize()
                 Button("100%") { setZoom(1) }.font(.system(size: 10)).fixedSize()
-                Button(t("Вписать", "Fit")) {
-                    var next = model.canvasView; next.fit = true; next.zoom = 1; next.centerX = 0.5; next.centerY = 0.5
-                    model.setCanvasView(next)
-                }.font(.system(size: 10)).fixedSize()
+                ViewThatFits(in: .horizontal) {
+                    Button(t("Вписать", "Fit")) {
+                        var next = model.canvasView; next.fit = true; next.zoom = 1; next.centerX = 0.5; next.centerY = 0.5
+                        model.setCanvasView(next)
+                    }.font(.system(size: 10)).fixedSize()
+                    Button {
+                        var next = model.canvasView; next.fit = true; next.zoom = 1; next.centerX = 0.5; next.centerY = 0.5
+                        model.setCanvasView(next)
+                    } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                    .help(t("Вписать", "Fit"))
+                    .accessibilityLabel(t("Вписать", "Fit"))
+                }
                 Divider().frame(height: 12)
                 Button { step(-1) } label: { Image(systemName: "chevron.left") }.disabled(model.photos.count < 2)
                 Button { step(1) } label: { Image(systemName: "chevron.right") }.disabled(model.photos.count < 2)
