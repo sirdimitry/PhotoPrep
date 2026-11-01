@@ -95,19 +95,49 @@ private struct V1OutputFrame: View {
 
 private struct V1PhotoThumb: View {
     let photo: PhotoHeader
-    @State private var image: NSImage?
+    let exportWidth: Int
+    let exportHeight: Int
+    @State private var image: CGImage?
+    @State private var showInfo = false
+
+    private var format: String {
+        photo.url.pathExtension.uppercased()
+    }
+    private var bytes: Int64 {
+        (try? photo.url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+    }
+
     var body: some View {
-        Group {
-            if let image {
-                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
-            } else {
-                Color(white: 0.18).overlay(Image(systemName: "photo").foregroundStyle(.secondary))
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if let image {
+                    Image(decorative: image, scale: 1).resizable().aspectRatio(contentMode: .fill)
+                } else {
+                    Color(white: 0.2).overlay(Image(systemName: "photo").foregroundStyle(.secondary))
+                }
+            }
+            .frame(width: 120, height: 80).clipped().cornerRadius(4)
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color(white: 0.32), lineWidth: 0.5))
+            Button { showInfo.toggle() } label: {
+                Image(systemName: "info.circle.fill")
+                    .font(.system(size: 13)).foregroundStyle(.white, Color.black.opacity(0.65))
+            }
+            .buttonStyle(.plain)
+            .padding(4)
+            .accessibilityLabel("Информация о файле")
+            .help("Информация о файле")
+            .popover(isPresented: $showInfo, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(photo.url.lastPathComponent).font(.system(size: 12, weight: .semibold))
+                        .lineLimit(2).truncationMode(.middle)
+                    Text("\(photo.width) × \(photo.height) · \(format)")
+                    Text("Файл: \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))")
+                    Text("Экспорт: \(exportWidth) × \(exportHeight)")
+                }.font(.system(size: 11)).padding(12).frame(width: 250)
             }
         }
-        .frame(width: 74, height: 34).clipped().cornerRadius(4)
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color(white: 0.3), lineWidth: 0.5))
         .task(id: photo.url) {
-            image = NSImage(contentsOf: photo.url)
+            image = await ThumbnailCache.shared.image(for: photo.url)
         }
     }
 }
@@ -118,6 +148,7 @@ struct V1WorkspaceView: View {
     @State private var tool: V1PanelTool = .brush
     @State private var exportFormat: ExportFormat = .png
     @State private var exportQuality: Double = 0.92
+    @State private var canvasSize: CGSize = .zero
 
     private var ru: Bool { language == "ru" }
     private func t(_ r: String, _ e: String) -> String { ru ? r : e }
@@ -202,8 +233,33 @@ struct V1WorkspaceView: View {
     }
 
     private func selectTool(_ value: V1PanelTool) {
+        if model.cropMode && value != .crop { model.commitCrop() }
         tool = value
-        if value != .crop { model.cropMode = false }
+    }
+
+    private func logoFrame(imageRect: CGRect, crop: SessionCrop) -> CGRect {
+        CGRect(x: imageRect.minX + CGFloat(crop.x) * imageRect.width,
+               y: imageRect.minY + CGFloat(crop.y) * imageRect.height,
+               width: CGFloat(crop.width) * imageRect.width,
+               height: CGFloat(crop.height) * imageRect.height)
+    }
+
+    private func logoFrameForCrop(size: CGSize, aspect: Double) -> CGRect {
+        let available = CGRect(origin: .zero, size: size).insetBy(dx: 24, dy: 24)
+        var w = max(20, available.width), h = w / CGFloat(aspect)
+        if h > available.height { h = max(20, available.height); w = h * CGFloat(aspect) }
+        return CGRect(x: size.width/2-w/2, y: size.height/2-h/2, width: w, height: h)
+    }
+
+    private func logoRect(in frame: CGRect, logo: SessionLogo, asset: CGImage) -> CGRect {
+        let inset = logo.mode == "template" ? 0.0 : 0.03
+        let area = frame.insetBy(dx: frame.width * inset, dy: frame.height * inset)
+        let aspect = CGFloat(asset.height) / CGFloat(max(1, asset.width))
+        let w = min(frame.width * CGFloat(logo.width), area.width, area.height / aspect)
+        let h = w * aspect
+        return CGRect(x: area.minX + (area.width - w) * CGFloat(logo.x),
+                      y: area.minY + (area.height - h) * CGFloat(logo.y),
+                      width: w, height: h)
     }
 
     private var canvasArea: some View {
@@ -211,13 +267,16 @@ struct V1WorkspaceView: View {
             ZStack {
                 V1Checkerboard()
                 Group {
-                    if model.cropMode, let crop = model.crop, let image = model.cropImage {
+                    if model.cropMode, let crop = model.crop, let image = model.cropImage, let header = current {
                         CropCanvas(image: image, crop: crop, outputAspect: model.outputAspect,
+                                   documentSize: CGSize(width: header.width, height: header.height),
                                    onChange: { model.setCrop($0) })
-                    } else if let image = model.displayImage {
+                    } else if let image = model.displayImage, let header = current {
                         BrushCanvas(image: image, strokes: model.strokes, tool: model.tool,
-                                    brushWidth: model.brushWidth, showMask: !model.showingAfter,
+                                    brushWidth: model.brushWidth, showMask: model.showMask,
+                                    documentSize: CGSize(width: header.width, height: header.height),
                                     viewport: model.canvasView, panEnabled: tool == .move,
+                                    drawingEnabled: tool == .brush || tool == .eraser,
                                     onCommit: { model.addStroke($0) },
                                     onViewChange: { model.setCanvasView($0) })
                     } else if !model.busy {
@@ -231,13 +290,25 @@ struct V1WorkspaceView: View {
                 }
                 if !model.cropMode, let header = current, let selected = model.selected,
                    let image = model.displayImage {
+                    let ir = viewImageRect(size: geo.size, imageSize: CGSize(width: header.width, height: header.height))
                     V1CanvasGuides(imageSize: CGSize(width: header.width, height: header.height),
-                                   imageRect: viewImageRect(size: geo.size, imageSize: CGSize(width: header.width, height: header.height)),
+                                   imageRect: ir,
                                    crop: model.effectiveCrop(for: selected),
                                    backingScale: displayScale)
+                    if let logo = model.logo, logo.enabled, logo.opacity > 0, let asset = model.logoAsset {
+                        V1LogoOverlay(logo: logo, asset: asset,
+                                      frame: logoFrame(imageRect: ir, crop: model.effectiveCrop(for: selected)))
+                    }
+                }
+                if model.cropMode, let logo = model.logo, logo.enabled, logo.opacity > 0,
+                   let asset = model.logoAsset {
+                    V1LogoOverlay(logo: logo, asset: asset,
+                                  frame: logoFrameForCrop(size: geo.size, aspect: model.outputAspect))
                 }
                 if model.busy { ProgressView().controlSize(.large) }
             }
+            .onAppear { canvasSize = geo.size }
+            .onChange(of: geo.size) { _, size in canvasSize = size }
         }
         .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
@@ -256,9 +327,16 @@ struct V1WorkspaceView: View {
                       width: w, height: h)
     }
 
+    private var fitZoom: Double {
+        guard canvasSize.width > 0, canvasSize.height > 0, let header = current else { return 1 }
+        let available = CGRect(origin: .zero, size: canvasSize).insetBy(dx: 8, dy: 8)
+        guard available.width > 0, available.height > 0 else { return 1 }
+        let fit = min(available.width / CGFloat(header.width), available.height / CGFloat(header.height))
+        return Double(fit) * Double(max(1, displayScale))
+    }
     private var zoomPercent: Int {
-        if model.canvasView.fit { return 0 }
-        return Int((model.canvasView.zoom * 100).rounded())
+        let value = model.canvasView.fit ? fitZoom : model.canvasView.zoom
+        return Int((value * 100).rounded())
     }
     private func setZoom(_ value: Double) {
         var next = model.canvasView
@@ -267,10 +345,8 @@ struct V1WorkspaceView: View {
         model.setCanvasView(next)
     }
     private func zoomStep(_ factor: Double) {
-        guard !model.canvasView.fit else {
-            var next = model.canvasView; next.fit = false; next.zoom = 1; model.setCanvasView(next); return
-        }
-        setZoom(model.canvasView.zoom * factor)
+        let base = model.canvasView.fit ? fitZoom : model.canvasView.zoom
+        setZoom(base * factor)
     }
 
     private var filmstrip: some View {
@@ -282,7 +358,7 @@ struct V1WorkspaceView: View {
                     .lineLimit(1).fixedSize()
                 Spacer()
                 Button { zoomStep(1 / 1.15) } label: { Image(systemName: "minus.magnifyingglass") }
-                Text(model.canvasView.fit ? "—" : "\(zoomPercent)%").font(.system(size: 10)).frame(width: 38)
+                Text("\(zoomPercent)%").font(.system(size: 10)).frame(width: 42)
                 Button { zoomStep(1.15) } label: { Image(systemName: "plus.magnifyingglass") }
                 Button("100%") { setZoom(1) }.font(.system(size: 10))
                 Button(t("Вписать", "Fit")) {
@@ -300,8 +376,9 @@ struct V1WorkspaceView: View {
                     ForEach(model.photos) { photo in
                         Button { model.selected = photo.url } label: {
                             VStack(spacing: 3) {
-                                V1PhotoThumb(photo: photo)
+                                V1PhotoThumb(photo: photo, exportWidth: model.sessionOutputWidth, exportHeight: model.sessionOutputHeight)
                                 Text(photo.url.lastPathComponent).font(.system(size: 9)).lineLimit(1)
+                                    .truncationMode(.middle).frame(width: 120, alignment: .leading)
                                     .foregroundStyle(model.selected == photo.url ? .white : .secondary)
                             }
                             .padding(4)
@@ -312,7 +389,7 @@ struct V1WorkspaceView: View {
                         }.buttonStyle(.plain)
                     }
                 }.padding(.horizontal, 12)
-            }.frame(height: 52)
+            }.frame(height: 96)
         }
         .padding(.top, 4).background(Color(white: 0.155))
     }
@@ -401,10 +478,11 @@ struct V1WorkspaceView: View {
             HStack {
                 Text(t("Размер", "Size")).font(.system(size: 11))
                 Slider(value: $model.brushWidth, in: 0.01...0.25)
-                Text("\(Int(model.brushWidth * 1000))").font(.system(size: 10)).monospacedDigit().frame(width: 26)
+                Text("\(Int((model.brushWidth * Double(current?.width ?? 0)).rounded())) px")
+                    .font(.system(size: 10)).monospacedDigit().frame(width: 46)
             }
-            Toggle(t("Показывать маску", "Show mask"), isOn: Binding(get: { !model.showingAfter }, set: { model.showingAfter = !$0 }))
-                .font(.system(size: 11)).disabled(model.resultImage == nil)
+            Toggle(t("Показывать маску", "Show mask"), isOn: $model.showMask)
+                .font(.system(size: 11))
             HStack {
                 Button(t("Отменить штрих", "Undo stroke")) { model.undoLastStroke() }.disabled(!model.canUndoStroke)
                 Button(t("Очистить", "Clear")) { model.clearMask() }.disabled(model.strokes.isEmpty || model.retouchBusy)
@@ -442,9 +520,9 @@ struct V1WorkspaceView: View {
                 .font(.system(size: 10)).foregroundStyle(.secondary)
             if model.crop != nil {
                 HStack {
-                    Button(t("Готово", "Done")) { model.cropMode = false; tool = .brush }
+                    Button(t("Готово", "Done")) { model.commitCrop(); tool = .brush }
+                    Button(t("Отмена", "Cancel")) { model.cancelCrop() }
                     Button(t("Сбросить", "Reset")) { model.resetCrop() }
-                    Button(t("Отменить", "Undo")) { model.undoCrop() }
                 }.font(.system(size: 11))
             } else {
                 Button(t("Начать кадрирование", "Start crop")) { model.beginCrop() }
@@ -466,6 +544,12 @@ struct V1WorkspaceView: View {
         VStack(alignment: .leading, spacing: 10) {
             section(t("Логотип", "Logo"))
             if let logo = model.logo {
+                Text(URL(fileURLWithPath: logo.path).lastPathComponent).font(.system(size: 10)).lineLimit(1)
+                    .truncationMode(.middle)
+                Picker("", selection: Binding(get: { logo.mode }, set: { model.updateLogo(mode: $0) })) {
+                    Text(t("Логотип", "Logo")).tag("logo")
+                    Text(t("Накладка", "Overlay")).tag("template")
+                }.pickerStyle(.segmented).labelsHidden()
                 Toggle(t("Показывать", "Visible"), isOn: Binding(get: { logo.enabled }, set: { model.updateLogo(enabled: $0) }))
                     .font(.system(size: 11))
                 HStack { Text(t("Размер", "Size")).font(.system(size: 11)); Slider(value: Binding(get: { logo.width }, set: { model.updateLogo(width: $0) }), in: 0.01...0.94) }
@@ -522,58 +606,79 @@ struct V1WorkspaceView: View {
     }
 }
 
+
+
+private struct V1LogoOverlay: View {
+    let logo: SessionLogo
+    let asset: CGImage
+    let frame: CGRect
+    var body: some View {
+        let aspect = CGFloat(asset.height) / CGFloat(max(1, asset.width))
+        let inset = logo.mode == "template" ? 0.0 : 0.03
+        let area = frame.insetBy(dx: frame.width * inset, dy: frame.height * inset)
+        let w = min(frame.width * CGFloat(logo.width), area.width, area.height / aspect)
+        let h = w * aspect
+        let rect = CGRect(x: area.minX + (area.width-w) * CGFloat(logo.x),
+                          y: area.minY + (area.height-h) * CGFloat(logo.y), width: w, height: h)
+        Canvas { context, _ in
+            context.opacity = logo.opacity
+            context.draw(Image(decorative: asset, scale: 1), in: rect)
+        }.allowsHitTesting(false)
+    }
+}
+
 private struct V1CanvasGuides: View {
     let imageSize: CGSize
     let imageRect: CGRect
     let crop: SessionCrop
     let backingScale: CGFloat
-
     var body: some View {
-        Canvas { context, _ in
+        Canvas { context, size in
+            let strip: CGFloat = 22
+            // Fixed ruler bands, independent of image pan.
+            context.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: strip)), with: .color(Color(white: 0.14)))
+            context.fill(Path(CGRect(x: 0, y: 0, width: strip, height: size.height)), with: .color(Color(white: 0.14)))
+            context.draw(Text("px").font(.system(size: 8, weight: .semibold)).foregroundStyle(.secondary),
+                         at: CGPoint(x: 11, y: 11))
             guard imageRect.width > 1, imageRect.height > 1 else { return }
+            let label = Color(white: 0.66)
             let tick = Color(white: 0.45)
-            let label = Color(white: 0.62)
-            // Rulers are in image-pixel coordinates and follow the same transform as the canvas.
-            let step = CGFloat(100)
+            let scale = imageRect.width / imageSize.width
+            var step: CGFloat = 100
+            while step * scale < 48 { step *= 2 }
             var px: CGFloat = 0
             while px <= imageSize.width {
-                let x = imageRect.minX + px * imageRect.width / imageSize.width
-                let h: CGFloat = px.truncatingRemainder(dividingBy: 500) == 0 ? 9 : 5
-                context.stroke(Path { p in
-                    p.move(to: CGPoint(x: x, y: imageRect.minY))
-                    p.addLine(to: CGPoint(x: x, y: imageRect.minY - h))
-                }, with: .color(tick), lineWidth: 0.7)
-                if px.truncatingRemainder(dividingBy: 500) == 0 {
+                let x = imageRect.minX + px * scale
+                if x >= strip && x <= size.width {
+                    context.stroke(Path { p in p.move(to: CGPoint(x:x,y:0)); p.addLine(to: CGPoint(x:x,y:8)) },
+                                   with: .color(tick), lineWidth: 0.7)
                     context.draw(Text("\(Int(px))").font(.system(size: 8)).foregroundStyle(label),
-                                 at: CGPoint(x: x + 12, y: imageRect.minY - 13))
+                                 at: CGPoint(x:x+10,y:12))
                 }
                 px += step
             }
-            var py: CGFloat = 0
-            while py <= imageSize.height {
-                let y = imageRect.minY + py * imageRect.height / imageSize.height
-                let w: CGFloat = py.truncatingRemainder(dividingBy: 500) == 0 ? 9 : 5
-                context.stroke(Path { p in
-                    p.move(to: CGPoint(x: imageRect.minX, y: y))
-                    p.addLine(to: CGPoint(x: imageRect.minX - w, y: y))
-                }, with: .color(tick), lineWidth: 0.7)
-                if py.truncatingRemainder(dividingBy: 500) == 0 {
-                    context.draw(Text("\(Int(py))").font(.system(size: 8)).foregroundStyle(label),
-                                 at: CGPoint(x: imageRect.minX - 24, y: y))
+            let yscale = imageRect.height / imageSize.height
+            var ypx: CGFloat = 0
+            var ystep: CGFloat = 100
+            while ystep * yscale < 36 { ystep *= 2 }
+            while ypx <= imageSize.height {
+                let y = imageRect.minY + ypx * yscale
+                if y >= strip && y <= size.height {
+                    context.stroke(Path { p in p.move(to: CGPoint(x:0,y:y)); p.addLine(to: CGPoint(x:8,y:y)) },
+                                   with: .color(tick), lineWidth: 0.7)
+                    context.draw(Text("\(Int(ypx))").font(.system(size: 8)).foregroundStyle(label),
+                                 at: CGPoint(x:12,y:y+5), anchor: .leading)
                 }
-                py += step
+                ypx += ystep
             }
-            let frame = CGRect(x: imageRect.minX + CGFloat(crop.x) * imageRect.width,
-                               y: imageRect.minY + CGFloat(crop.y) * imageRect.height,
-                               width: CGFloat(crop.width) * imageRect.width,
-                               height: CGFloat(crop.height) * imageRect.height)
-            var outside = Path()
-            outside.addRect(imageRect)
-            outside.addRect(frame)
-            context.fill(outside, with: .color(.black.opacity(0.22)), style: FillStyle(eoFill: true))
-            context.stroke(Path(frame.insetBy(dx: -1, dy: -1)), with: .color(.black.opacity(0.75)), lineWidth: 3)
+            let frame = CGRect(x: imageRect.minX + CGFloat(crop.x)*imageRect.width,
+                               y: imageRect.minY + CGFloat(crop.y)*imageRect.height,
+                               width: CGFloat(crop.width)*imageRect.width,
+                               height: CGFloat(crop.height)*imageRect.height)
+            var outside = Path(); outside.addRect(imageRect); outside.addRect(frame)
+            context.fill(outside, with: .color(.black.opacity(0.24)), style: FillStyle(eoFill: true))
+            context.stroke(Path(frame.insetBy(dx:-1,dy:-1)), with: .color(.black.opacity(0.8)), lineWidth: 3)
             context.stroke(Path(frame), with: .color(.yellow), lineWidth: 2)
-        }
-        .allowsHitTesting(false)
+        }.allowsHitTesting(false)
     }
 }

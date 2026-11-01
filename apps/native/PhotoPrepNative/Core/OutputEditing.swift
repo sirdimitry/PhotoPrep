@@ -60,9 +60,8 @@ public enum OutputEditing {
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             throw OutputEditingError.invalidLogo
         }
-        if mode == "template" {
-            return try trimAlpha(image)
-        }
+        // Overlay/template keeps its full transparent canvas. Do not trim:
+        // internal composition and padding are part of the asset.
         return image
     }
 

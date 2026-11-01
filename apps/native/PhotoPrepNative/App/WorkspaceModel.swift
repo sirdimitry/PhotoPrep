@@ -164,6 +164,7 @@ final class WorkspaceModel: ObservableObject {
         passCount = state.passes.count
         crop = state.crop
         logo = state.logo
+        loadLogoAsset(state.logo)
         canvasView = state.view
         if let current, !state.passes.isEmpty {
             resultImage = pixelCache.get(source: current, passes: state.passes, pass: state.passes.count - 1)
@@ -177,6 +178,8 @@ final class WorkspaceModel: ObservableObject {
 
     @Published private(set) var preview: PhotoPreview?
     @Published private(set) var canvasView = SessionView()
+    @Published var showMask = true
+    @Published private(set) var logoAsset: CGImage?
     @Published private(set) var importBusy = false
     @Published private(set) var previewBusy = false
     @Published private(set) var retouchBusy = false
@@ -198,6 +201,8 @@ final class WorkspaceModel: ObservableObject {
     @Published private(set) var isDirty = false
     @Published var cropMode = false
     @Published private(set) var crop: SessionCrop?
+    private var cropSessionOriginal: SessionCrop?
+    private var cropSessionDirty: Bool = false
     @Published private(set) var logo: SessionLogo?
     @Published private(set) var exportBusy = false
     @Published private(set) var exportDone = 0
@@ -946,8 +951,10 @@ final class WorkspaceModel: ObservableObject {
     }
 
     func beginCrop() {
-        guard let selected, let state = editStates[selected] else { return }
+        guard let selected, let state = editStates[selected], !cropMode else { return }
         let aspect = sourceAspect(selected) ?? (4.0 / 3.0)
+        cropSessionOriginal = state.crop
+        cropSessionDirty = isDirty
         if state.crop == nil {
             let fit = fittedCrop(sourceAspect: aspect)
             editStates[selected, default: PhotoEditState()].crop = fit
@@ -959,12 +966,30 @@ final class WorkspaceModel: ObservableObject {
     func setCrop(_ value: SessionCrop) {
         guard let selected, let aspect = sourceAspect(selected) else { return }
         var state = editStates[selected] ?? PhotoEditState()
-        state.cropUndo.append(state.crop)
         let normalized = normalizedCrop(value, sourceAspect: aspect)
         state.crop = normalized
         editStates[selected] = state
         crop = normalized
-        isDirty = true
+    }
+
+    func commitCrop() {
+        defer { cropSessionOriginal = nil; cropMode = false }
+        guard let selected, var state = editStates[selected] else { return }
+        if state.crop != cropSessionOriginal {
+            state.cropUndo.append(cropSessionOriginal)
+            if state.cropUndo.count > 20 { state.cropUndo.removeFirst(state.cropUndo.count - 20) }
+            editStates[selected] = state
+            isDirty = true
+        } else { isDirty = cropSessionDirty }
+    }
+
+    func cancelCrop() {
+        defer { cropSessionOriginal = nil; cropMode = false }
+        guard let selected, var state = editStates[selected] else { return }
+        state.crop = cropSessionOriginal
+        editStates[selected] = state
+        crop = cropSessionOriginal
+        isDirty = cropSessionDirty
     }
 
     func undoCrop() {
@@ -978,6 +1003,7 @@ final class WorkspaceModel: ObservableObject {
     func resetCrop() {
         guard let selected, var state = editStates[selected] else { return }
         state.cropUndo.append(state.crop)
+        if state.cropUndo.count > 20 { state.cropUndo.removeFirst(state.cropUndo.count - 20) }
         state.crop = nil
         editStates[selected] = state
         crop = nil
@@ -996,26 +1022,29 @@ final class WorkspaceModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 do {
-                    _ = try OutputEditing.loadLogo(url.path, mode: "logo")
+                    let asset = try OutputEditing.loadLogo(url.path, mode: "logo")
                     var state = self.editStates[selected] ?? PhotoEditState()
                     state.logo = SessionLogo(path: url.path, width: 0.15, opacity: 1, x: 0, y: 0,
                                              enabled: true, mode: "logo")
                     self.editStates[selected] = state
                     self.logo = state.logo
+                    self.logoAsset = asset
+                    self.exportError = nil
                     self.isDirty = true
-                } catch { self.exportError = "logo_invalid" }
+                } catch { self.exportError = "Не удалось прочитать PNG-логотип" }
             }
         }
     }
 
     func updateLogo(width: Double? = nil, opacity: Double? = nil, x: Double? = nil,
-                    y: Double? = nil, enabled: Bool? = nil) {
+                    y: Double? = nil, enabled: Bool? = nil, mode: String? = nil) {
         guard let selected, var value = logo else { return }
         if let width { value.width = min(0.94, max(0.01, width)) }
         if let opacity { value.opacity = min(1, max(0, opacity)) }
         if let x { value.x = min(1, max(0, x)) }
         if let y { value.y = min(1, max(0, y)) }
         if let enabled { value.enabled = enabled }
+        if let mode { value.mode = mode; loadLogoAsset(value) }
         var state = editStates[selected] ?? PhotoEditState()
         state.logo = value
         editStates[selected] = state
@@ -1038,7 +1067,20 @@ final class WorkspaceModel: ObservableObject {
         state.logo = nil
         editStates[selected] = state
         logo = nil
+        logoAsset = nil
         isDirty = true
+    }
+
+    private func loadLogoAsset(_ value: SessionLogo?) {
+        guard let value else { logoAsset = nil; return }
+        Task { @MainActor [weak self] in
+            do {
+                let asset = try OutputEditing.loadLogo(value.path, mode: value.mode)
+                guard self?.logo?.path == value.path, self?.logo?.mode == value.mode else { return }
+                self?.logoAsset = asset
+                self?.exportError = nil
+            } catch { self?.logoAsset = nil; self?.exportError = "Не удалось прочитать PNG-логотип" }
+        }
     }
 
     var canUndoPass: Bool {
