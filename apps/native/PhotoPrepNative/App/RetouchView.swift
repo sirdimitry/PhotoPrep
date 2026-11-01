@@ -11,6 +11,7 @@ struct BrushCanvas: NSViewRepresentable {
     let viewport: SessionView
     let panEnabled: Bool
     let drawingEnabled: Bool
+    let cursorEnabled: Bool
     let onCommit: (MaskStroke) -> Void
     let onViewChange: (SessionView) -> Void
 
@@ -31,8 +32,10 @@ struct BrushCanvas: NSViewRepresentable {
         view.viewport = viewport
         view.panEnabled = panEnabled
         view.drawingEnabled = drawingEnabled
+        view.cursorEnabled = cursorEnabled
         view.onCommit = onCommit
         view.onViewChange = onViewChange
+        view.refreshCursorOverlay()
         view.needsDisplay = true
     }
 }
@@ -47,6 +50,8 @@ final class BrushCanvasView: NSView {
     var viewport = SessionView()
     var panEnabled = false
     var drawingEnabled = true
+    var cursorEnabled = true
+    private let cursorOverlay = CursorOverlayView()
     var onCommit: ((MaskStroke) -> Void)?
     var onViewChange: ((SessionView) -> Void)?
     private var currentStroke: MaskStroke?
@@ -54,6 +59,14 @@ final class BrushCanvasView: NSView {
     private var spaceDown = false
     private var tracking: NSTrackingArea?
     private var cursorPoint: CGPoint?
+    private var eventMonitor: Any?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        cursorOverlay.autoresizingMask = [.width, .height]
+        addSubview(cursorOverlay)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -89,7 +102,7 @@ final class BrushCanvasView: NSView {
         NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
             .draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
 
-        guard showMask else { drawCursor(); return }
+        guard showMask else { return }
         var visible = strokes
         if let currentStroke { visible.append(currentStroke) }
         guard !visible.isEmpty, let context = NSGraphicsContext.current?.cgContext else { return }
@@ -104,15 +117,16 @@ final class BrushCanvasView: NSView {
         NSColor.systemYellow.withAlphaComponent(0.28).setFill()
         rect.fill()
         context.restoreGState()
-        drawCursor()
     }
 
-    private func drawCursor() {
-        guard (drawingEnabled || panEnabled || spaceDown), let p = cursorPoint else { return }
-        let r = max(3, CGFloat(brushWidth) * imageRect.width / 2)
-        let outer = NSBezierPath(ovalIn: CGRect(x: p.x-r, y: p.y-r, width: 2*r, height: 2*r))
-        NSColor.black.withAlphaComponent(0.8).setStroke(); outer.lineWidth = 3; outer.stroke()
-        NSColor.white.setStroke(); outer.lineWidth = 1; outer.stroke()
+    func refreshCursorOverlay() {
+        let enabled = cursorEnabled && drawingEnabled && !spaceDown && !panEnabled
+        guard enabled, let point = cursorPoint else { cursorOverlay.isHidden = true; return }
+        let diameter = max(3, CGFloat(brushWidth) * imageRect.width)
+        cursorOverlay.isHidden = false
+        cursorOverlay.update(center: point, diameter: diameter,
+                             backingScale: window?.backingScaleFactor ?? 2)
+        cursorOverlay.frame = bounds
     }
 
     override func updateTrackingAreas() {
@@ -122,11 +136,20 @@ final class BrushCanvasView: NSView {
         addTrackingArea(area); tracking = area
     }
     override func mouseMoved(with event: NSEvent) {
-        cursorPoint = convert(event.locationInWindow, from: nil); needsDisplay = true
+        cursorPoint = convert(event.locationInWindow, from: nil)
+        refreshCursorOverlay()
         if drawingEnabled && !panEnabled { NSCursor.crosshair.set() }
         else { NSCursor.openHand.set() }
     }
-    override func mouseExited(with event: NSEvent) { cursorPoint = nil; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) {
+        cursorPoint = nil
+        cursorOverlay.isHidden = true
+    }
+    override func mouseEntered(with event: NSEvent) {
+        cursorPoint = convert(event.locationInWindow, from: nil)
+        refreshCursorOverlay()
+    }
+    override func layout() { super.layout(); cursorOverlay.frame = bounds; refreshCursorOverlay() }
 
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: (panEnabled || spaceDown) ? .openHand : .crosshair)
@@ -148,11 +171,14 @@ final class BrushCanvasView: NSView {
         let p = convert(event.locationInWindow, from: nil)
         if panEnabled || spaceDown {
             panStart = (p, viewport, viewport.fit ? fitZoom : viewport.zoom)
+            cursorOverlay.isHidden = true
             NSCursor.closedHand.push()
             return
         }
         guard drawingEnabled, image != nil, let point = normalizedPoint(event) else { return }
         currentStroke = MaskStroke(points: [point], width: brushWidth, erase: tool == .eraser)
+        cursorPoint = p
+        refreshCursorOverlay()
         needsDisplay = true
     }
 
@@ -168,6 +194,8 @@ final class BrushCanvasView: NSView {
             next.centerY = min(1, max(0, start.view.centerY + Double((p.y - start.point.y) / rect.height)))
             viewport = next
             onViewChange?(next)
+            cursorPoint = p
+            refreshCursorOverlay()
             needsDisplay = true
             return
         }
@@ -179,6 +207,8 @@ final class BrushCanvasView: NSView {
         }
         stroke.points.append(point)
         currentStroke = stroke
+        cursorPoint = p
+        refreshCursorOverlay()
         needsDisplay = true
     }
 
@@ -215,8 +245,24 @@ final class BrushCanvasView: NSView {
         resignObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification,
                                                                 object: window, queue: .main) { [weak self] _ in
             self?.spaceDown = false
-            self?.needsDisplay = true
+            self?.cursorOverlay.isHidden = true
         }
+        if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
+            guard let self, event.window == self.window else { return event }
+            let point = self.convert(event.locationInWindow, from: nil)
+            self.cursorPoint = self.bounds.contains(point) ? point : nil
+            self.refreshCursorOverlay()
+            return event
+        }
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil {
+            if let eventMonitor { NSEvent.removeMonitor(eventMonitor); self.eventMonitor = nil }
+            if let resignObserver { NotificationCenter.default.removeObserver(resignObserver); self.resignObserver = nil }
+        }
+        super.viewWillMove(toWindow: newWindow)
     }
 
     override func magnify(with event: NSEvent) {
@@ -273,6 +319,33 @@ final class BrushCanvasView: NSView {
             shouldInterpolate: false,
             intent: .defaultIntent
         )
+    }
+}
+
+final class CursorOverlayView: NSView {
+    private var center: CGPoint = .zero
+    private var diameter: CGFloat = 1
+    private var scale: CGFloat = 2
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = false
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    func update(center: CGPoint, diameter: CGFloat, backingScale: CGFloat) {
+        self.center = center; self.diameter = diameter; self.scale = max(1, backingScale)
+        needsDisplay = true
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        guard diameter > 1 else { return }
+        let rect = CGRect(x: center.x - diameter/2, y: center.y - diameter/2,
+                          width: diameter, height: diameter)
+        let outer = NSBezierPath(ovalIn: rect)
+        NSColor.black.withAlphaComponent(0.45).setStroke()
+        outer.lineWidth = 2 / scale; outer.stroke()
+        let inner = NSBezierPath(ovalIn: rect.insetBy(dx: 1/scale, dy: 1/scale))
+        NSColor.white.withAlphaComponent(0.75).setStroke()
+        inner.lineWidth = 1 / scale; inner.stroke()
     }
 }
 

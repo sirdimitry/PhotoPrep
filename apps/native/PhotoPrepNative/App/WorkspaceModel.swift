@@ -109,6 +109,17 @@ final class PixelCache {
     var count: Int { entries.count }
 }
 
+private struct PersistedLogo: Codable {
+    var path: String
+    var bookmark: Data
+    var mode: String
+    var width: Double
+    var opacity: Double
+    var x: Double
+    var y: Double
+    var enabled: Bool
+}
+
 @MainActor
 final class WorkspaceModel: ObservableObject {
     @Published private(set) var photos: [PhotoHeader] = []
@@ -157,6 +168,9 @@ final class WorkspaceModel: ObservableObject {
             return
         }
         if state.sourceIdentity == nil, let current { state.sourceIdentity = current }
+        if state.logo == nil, let persistedLogo {
+            state.logo = persistedLogo
+        }
         state.sourceChanged = false
         editStates[url] = state
         sourceNeedsDecision = false
@@ -215,6 +229,11 @@ final class WorkspaceModel: ObservableObject {
     private var savePanel: NSSavePanel?
     private var sessionScope: URL?
     private var pressureHistory: [[String: Any]] = []
+    private var persistedLogo: SessionLogo?
+    private var persistedLogoBookmark: Data?
+    private var logoAccessURL: URL?
+    private var persistLogoTask: Task<Void, Never>?
+    private static let logoDefaultsKey = "v1/logo"
     private var authorizedSessionFolders: Set<String> = []
 
     var busy: Bool { importBusy || previewBusy || retouchBusy }
@@ -242,6 +261,7 @@ final class WorkspaceModel: ObservableObject {
 
     init() {
         Self.current = self
+        loadPersistedLogo()
         let source = DispatchSource.makeMemoryPressureSource(eventMask: [.normal, .warning, .critical], queue: .main)
         source.setEventHandler { [weak self] in
             guard let self else { return }
@@ -1042,6 +1062,12 @@ final class WorkspaceModel: ObservableObject {
                     self.logoAsset = asset
                     self.exportError = nil
                     self.isDirty = true
+                    self.persistedLogo = state.logo
+                    self.persistedLogoBookmark = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+                    if self.logoAccessURL != url { self.logoAccessURL?.stopAccessingSecurityScopedResource() }
+                    self.logoAccessURL = url
+                    _ = url.startAccessingSecurityScopedResource()
+                    if let value = state.logo { self.schedulePersistLogo(value) }
                 } catch { self.exportError = "Не удалось прочитать PNG-логотип" }
             }
         }
@@ -1050,7 +1076,7 @@ final class WorkspaceModel: ObservableObject {
     func updateLogo(width: Double? = nil, opacity: Double? = nil, x: Double? = nil,
                     y: Double? = nil, enabled: Bool? = nil, mode: String? = nil) {
         guard let selected, var value = logo else { return }
-        if let width { value.width = min(0.94, max(0.01, width)) }
+        if let width { value.width = min(100, max(0.0001, width)) }
         if let opacity { value.opacity = min(1, max(0, opacity)) }
         if let x { value.x = min(1, max(0, x)) }
         if let y { value.y = min(1, max(0, y)) }
@@ -1070,6 +1096,8 @@ final class WorkspaceModel: ObservableObject {
             state.logo = value
             editStates[key] = state
         }
+        persistedLogo = value
+        schedulePersistLogo(value)
         isDirty = true
     }
 
@@ -1079,7 +1107,44 @@ final class WorkspaceModel: ObservableObject {
         editStates[selected] = state
         logo = nil
         logoAsset = nil
+        persistedLogo = nil
+        persistedLogoBookmark = nil
+        UserDefaults.standard.removeObject(forKey: Self.logoDefaultsKey)
         isDirty = true
+    }
+
+    private func schedulePersistLogo(_ value: SessionLogo) {
+        persistLogoTask?.cancel()
+        persistLogoTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled, let self else { return }
+            self.storePersistedLogo(value)
+        }
+    }
+
+    private func storePersistedLogo(_ value: SessionLogo) {
+        guard let bookmark = persistedLogoBookmark else { return }
+        let item = PersistedLogo(path: value.path, bookmark: bookmark, mode: value.mode,
+                                 width: value.width, opacity: value.opacity,
+                                 x: value.x, y: value.y, enabled: value.enabled)
+        if let data = try? JSONEncoder().encode(item) {
+            UserDefaults.standard.set(data, forKey: Self.logoDefaultsKey)
+        }
+        persistedLogo = value
+    }
+
+    private func loadPersistedLogo() {
+        guard let data = UserDefaults.standard.data(forKey: Self.logoDefaultsKey),
+              let item = try? JSONDecoder().decode(PersistedLogo.self, from: data) else { return }
+        var stale = false
+        guard let url = try? URL(resolvingBookmarkData: item.bookmark, options: [.withSecurityScope],
+                                 relativeTo: nil, bookmarkDataIsStale: &stale), !stale else { return }
+        _ = url.startAccessingSecurityScopedResource()
+        logoAccessURL = url
+        persistedLogoBookmark = item.bookmark
+        persistedLogo = SessionLogo(path: url.path, width: item.width, opacity: item.opacity,
+                                    x: item.x, y: item.y, enabled: item.enabled, mode: item.mode)
+        if let logo = persistedLogo { loadLogoAsset(logo) }
     }
 
     private func loadLogoAsset(_ value: SessionLogo?) {

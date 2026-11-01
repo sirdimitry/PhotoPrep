@@ -4,16 +4,14 @@ import UniformTypeIdentifiers
 
 
 enum V1PanelTool: String, CaseIterable, Identifiable {
-    case brush, eraser, crop, move, logo, comparison
+    case brush, eraser, crop, logo
     var id: String { rawValue }
     var symbol: String {
         switch self {
         case .brush: return "paintbrush.pointed"
         case .eraser: return "eraser"
         case .crop: return "crop"
-        case .move: return "arrow.up.and.down.and.arrow.left.and.right"
-        case .logo: return "signature"
-        case .comparison: return "rectangle.split.2x1"
+        case .logo: return "logo"
         }
     }
 }
@@ -165,8 +163,6 @@ struct V1WorkspaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider().overlay(Color(white: 0.22))
             HStack(spacing: 0) {
                 toolRail
                 Divider().overlay(Color(white: 0.22))
@@ -208,13 +204,7 @@ struct V1WorkspaceView: View {
             rail(.brush, "Кисть", "Brush") { selectTool(.brush); model.tool = .brush }
             rail(.eraser, "Ластик", "Eraser") { selectTool(.eraser); model.tool = .eraser }
             rail(.crop, "Кадрирование", "Crop") { selectTool(.crop); model.beginCrop() }
-            rail(.move, "Перемещение", "Move") { selectTool(.move) }
-            rail(.logo, "Логотип", "Logo") { selectTool(.logo) }
-            rail(.comparison, "До/После", "Before/After") {
-                selectTool(.comparison)
-                guard model.resultImage != nil else { return }
-                model.showingAfter.toggle()
-            }
+            logoRail
             Spacer()
         }
         .padding(.vertical, 10).frame(width: 54)
@@ -229,7 +219,20 @@ struct V1WorkspaceView: View {
                 .foregroundStyle(tool == value ? Color.black : Color(white: 0.78))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
         }
-        .buttonStyle(.plain).help(t(r, e))
+        .buttonStyle(.plain).help(t("\(r) — \(e)", "\(e)"))
+    }
+
+    private var logoRail: some View {
+        Button { selectTool(.logo) } label: {
+            LogoGlyph()
+                .frame(width: 38, height: 36)
+                .background(tool == .logo ? Color.yellow : Color.clear)
+                .foregroundStyle(tool == .logo ? Color.black : Color(white: 0.78))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .help(t("Логотип — добавить и настроить наложение", "Logo — add and configure an overlay"))
+        .accessibilityLabel(t("Логотип", "Logo"))
     }
 
     private func selectTool(_ value: V1PanelTool) {
@@ -279,8 +282,9 @@ struct V1WorkspaceView: View {
                         BrushCanvas(image: image, strokes: model.strokes, tool: model.tool,
                                     brushWidth: model.brushWidth, showMask: model.showMask,
                                     documentSize: CGSize(width: header.width, height: header.height),
-                                    viewport: model.canvasView, panEnabled: tool == .move,
+                                    viewport: model.canvasView, panEnabled: false,
                                     drawingEnabled: tool == .brush || tool == .eraser,
+                                    cursorEnabled: tool == .brush || tool == .eraser,
                                     onCommit: { model.addStroke($0) },
                                     onViewChange: { model.setCanvasView($0) })
                     } else if !model.busy {
@@ -301,13 +305,21 @@ struct V1WorkspaceView: View {
                                    backingScale: displayScale)
                     if let logo = model.logo, logo.enabled, logo.opacity > 0, let asset = model.logoAsset {
                         V1LogoOverlay(logo: logo, asset: asset,
-                                      frame: logoFrame(imageRect: ir, crop: model.effectiveCrop(for: selected)))
+                                      frame: logoFrame(imageRect: ir, crop: model.effectiveCrop(for: selected)),
+                                      editable: tool == .logo,
+                                      onMove: { dx, dy, frameRect, logoRect in
+                                          moveLogo(dx: dx, dy: dy, frame: frameRect, logoRect: logoRect)
+                                      })
                     }
                 }
                 if model.cropMode, let logo = model.logo, logo.enabled, logo.opacity > 0,
                    let asset = model.logoAsset {
                     V1LogoOverlay(logo: logo, asset: asset,
-                                  frame: logoFrameForCrop(size: geo.size, aspect: model.outputAspect))
+                                  frame: logoFrameForCrop(size: geo.size, aspect: model.outputAspect),
+                                  editable: tool == .logo,
+                                  onMove: { dx, dy, frameRect, logoRect in
+                                      moveLogo(dx: dx, dy: dy, frame: frameRect, logoRect: logoRect)
+                                  })
                 }
                 if model.busy { ProgressView().controlSize(.large) }
             }
@@ -373,26 +385,6 @@ struct V1WorkspaceView: View {
                 Text("· \(model.photos.count)").font(.system(size: 11)).foregroundStyle(.secondary)
                     .lineLimit(1).fixedSize()
                 Spacer()
-                Button { zoomStep(1 / 1.15) } label: { Image(systemName: "minus.magnifyingglass") }.fixedSize()
-                Text("\(zoomPercent)%").font(.system(size: 10)).frame(width: 36).fixedSize()
-                Button { zoomStep(1.15) } label: { Image(systemName: "plus.magnifyingglass") }.fixedSize()
-                Button("100%") { setZoom(1) }.font(.system(size: 10)).fixedSize()
-                ViewThatFits(in: .horizontal) {
-                    Button(t("Вписать", "Fit")) {
-                        var next = model.canvasView; next.fit = true; next.zoom = 1; next.centerX = 0.5; next.centerY = 0.5
-                        model.setCanvasView(next)
-                    }.font(.system(size: 10)).fixedSize()
-                    Button {
-                        var next = model.canvasView; next.fit = true; next.zoom = 1; next.centerX = 0.5; next.centerY = 0.5
-                        model.setCanvasView(next)
-                    } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
-                    .help(t("Вписать", "Fit"))
-                    .accessibilityLabel(t("Вписать", "Fit"))
-                }
-                Divider().frame(height: 12)
-                Button { step(-1) } label: { Image(systemName: "chevron.left") }.disabled(model.photos.count < 2)
-                Button { step(1) } label: { Image(systemName: "chevron.right") }.disabled(model.photos.count < 2)
-                Button { model.selected = nil } label: { Image(systemName: "xmark") }.disabled(model.selected == nil)
             }.font(.system(size: 11)).padding(.horizontal, 12)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
@@ -462,8 +454,29 @@ struct V1WorkspaceView: View {
 
     @ViewBuilder private var rightPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(t("Параметры", "Parameters")).font(.system(size: 13, weight: .semibold))
-                .padding(.horizontal, 14).frame(height: 38)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(t("Параметры", "Parameters")).font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                    SettingsLink { Image(systemName: "gearshape") }
+                        .help(t("Настройки оформления", "Appearance settings"))
+                }
+                HStack(spacing: 6) {
+                    Button { model.importPhotos() } label: { Label(t("Открыть фото", "Open Photos"), systemImage: "photo") }
+                        .buttonStyle(.borderedProminent).tint(.yellow).foregroundStyle(.black)
+                        .disabled(model.busy || model.pressure != .normal)
+                    Button { model.importFolder() } label: { Label(t("Открыть папку", "Open Folder"), systemImage: "folder") }
+                        .disabled(model.busy || model.pressure != .normal)
+                }.font(.system(size: 11))
+                HStack(spacing: 6) {
+                    Button { step(-1) } label: { Image(systemName: "chevron.left") }.disabled(model.photos.count < 2)
+                    Button { step(1) } label: { Image(systemName: "chevron.right") }.disabled(model.photos.count < 2)
+                    Button { model.selected = nil } label: { Image(systemName: "xmark") }.disabled(model.selected == nil)
+                    Spacer()
+                }.font(.system(size: 11))
+            }.padding(12)
+            Divider().overlay(Color(white: 0.22))
+            zoomInspector
             Divider().overlay(Color(white: 0.22))
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
@@ -483,14 +496,49 @@ struct V1WorkspaceView: View {
                     switch tool {
                     case .brush, .eraser: retouchControls
                     case .crop: cropControls
-                    case .move: moveControls
                     case .logo: logoControls
-                    case .comparison: comparisonControls
                     }
-                    exportControls
-                }.padding(14)
+                }.padding(12)
             }
+            .frame(maxHeight: .infinity)
+            Divider().overlay(Color(white: 0.22))
+            exportControls
+                .padding(12)
         }.background(Color(white: 0.155))
+    }
+
+    private func moveLogo(dx: CGFloat, dy: CGFloat, frame: CGRect, logoRect: CGRect) {
+        guard var value = model.logo else { return }
+        let area = frame.insetBy(dx: frame.width * (value.mode == "template" ? 0 : 0.03),
+                                dy: frame.height * (value.mode == "template" ? 0 : 0.03))
+        let availableX = area.width - logoRect.width
+        let availableY = area.height - logoRect.height
+        if abs(availableX) > 1 { value.x = min(1, max(0, value.x + Double(dx / availableX))) }
+        if abs(availableY) > 1 { value.y = min(1, max(0, value.y + Double(dy / availableY))) }
+        model.updateLogo(x: value.x, y: value.y)
+    }
+
+    private var zoomInspector: some View {
+        HStack(spacing: 5) {
+            Text(t("Масштаб", "Zoom")).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize()
+            Spacer(minLength: 2)
+            Button { zoomStep(1 / 1.15) } label: { Image(systemName: "minus.magnifyingglass") }.fixedSize()
+            Text("\(zoomPercent)%").font(.system(size: 10, weight: .medium)).frame(width: 38)
+            Button { zoomStep(1.15) } label: { Image(systemName: "plus.magnifyingglass") }.fixedSize()
+            Button("100%") { setZoom(1) }.font(.system(size: 10)).fixedSize()
+            ViewThatFits(in: .horizontal) {
+                Button(t("Вписать", "Fit")) {
+                    var next = model.canvasView; next.fit = true; next.zoom = 1; next.centerX = 0.5; next.centerY = 0.5
+                    model.setCanvasView(next)
+                }.font(.system(size: 10)).fixedSize()
+                Button {
+                    var next = model.canvasView; next.fit = true; next.zoom = 1; next.centerX = 0.5; next.centerY = 0.5
+                    model.setCanvasView(next)
+                } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                .help(t("Вписать", "Fit"))
+                .accessibilityLabel(t("Вписать", "Fit"))
+            }
+        }.padding(.horizontal, 12).frame(height: 32)
     }
 
     private func section(_ value: String) -> some View {
@@ -571,6 +619,28 @@ struct V1WorkspaceView: View {
         }
     }
 
+    private var logoPercent: Double {
+        guard let logo = model.logo, let asset = model.logoAsset, asset.width > 0 else { return 100 }
+        return Double(logo.width) * Double(model.sessionOutputWidth) / Double(asset.width) * 100
+    }
+
+    private func setLogoPercent(_ percent: Double) {
+        guard let asset = model.logoAsset, asset.width > 0, model.logo != nil else { return }
+        let p = min(10_000, max(1, percent))
+        model.updateLogo(width: p / 100 * Double(asset.width) / Double(model.sessionOutputWidth))
+    }
+
+    private var logoScalePosition: Double {
+        let p = max(1, min(10_000, logoPercent))
+        return (log10(p) - 0) / 4
+    }
+
+    private var logoScaleBinding: Binding<Double> {
+        Binding(get: { logoScalePosition }, set: { pos in
+            setLogoPercent(pow(10, max(0, min(1, pos)) * 4))
+        })
+    }
+
     private var logoControls: some View {
         VStack(alignment: .leading, spacing: 10) {
             section(t("Логотип", "Logo"))
@@ -583,7 +653,20 @@ struct V1WorkspaceView: View {
                 }.pickerStyle(.segmented).labelsHidden()
                 Toggle(t("Показывать", "Visible"), isOn: Binding(get: { logo.enabled }, set: { model.updateLogo(enabled: $0) }))
                     .font(.system(size: 11))
-                HStack { Text(t("Размер", "Size")).font(.system(size: 11)); Slider(value: Binding(get: { logo.width }, set: { model.updateLogo(width: $0) }), in: 0.01...0.94) }
+                HStack(spacing: 6) {
+                    Text(t("Масштаб", "Scale")).font(.system(size: 11))
+                    Slider(value: logoScaleBinding, in: 0...1)
+                    TextField("", value: Binding(get: { Int(logoPercent.rounded()) }, set: { setLogoPercent(Double($0)) }), format: .number)
+                        .textFieldStyle(.roundedBorder).frame(width: 48)
+                        .multilineTextAlignment(.trailing)
+                    Text("%").font(.system(size: 10))
+                }
+                HStack {
+                    Text(t("100% — исходный размер", "100% — source size"))
+                        .font(.system(size: 9)).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("100%") { setLogoPercent(100) }.font(.system(size: 9))
+                }
                 HStack { Text(t("Прозрачность", "Opacity")).font(.system(size: 11)); Slider(value: Binding(get: { logo.opacity }, set: { model.updateLogo(opacity: $0) }), in: 0...1) }
                 HStack { Text("X").font(.system(size: 10)); Slider(value: Binding(get: { logo.x }, set: { model.updateLogo(x: $0) }), in: 0...1) }
                 HStack { Text("Y").font(.system(size: 10)); Slider(value: Binding(get: { logo.y }, set: { model.updateLogo(y: $0) }), in: 0...1) }
@@ -624,8 +707,13 @@ struct V1WorkspaceView: View {
                     .font(.system(size: 10))
             }
             Button { model.exportPanel(format: exportFormat, quality: exportQuality) } label: {
-                Text(t("Экспортировать коллекцию…", "Export collection…")).frame(maxWidth: .infinity)
-            }.buttonStyle(.bordered).disabled(model.photos.isEmpty || model.exportBusy || model.sessionReadOnly != nil || model.sourceNeedsDecision)
+                Text(t("Экспорт", "Export")).frame(maxWidth: .infinity)
+            }.buttonStyle(.borderedProminent).tint(.yellow).foregroundStyle(.black)
+                .controlSize(.large)
+                .disabled(model.photos.isEmpty || model.exportBusy || model.sessionReadOnly != nil || model.sourceNeedsDecision)
+            if let error = model.exportError {
+                Text(error).font(.system(size: 10)).foregroundStyle(.orange).lineLimit(2)
+            }
             if model.exportBusy {
                 HStack {
                     ProgressView().controlSize(.small)
@@ -643,18 +731,54 @@ private struct V1LogoOverlay: View {
     let logo: SessionLogo
     let asset: CGImage
     let frame: CGRect
+    let editable: Bool
+    let onMove: (CGFloat, CGFloat, CGRect, CGRect) -> Void
+    @State private var hovering = false
+    @State private var lastTranslation: CGSize = .zero
+
     var body: some View {
-        let aspect = CGFloat(asset.height) / CGFloat(max(1, asset.width))
+        let aw = CGFloat(asset.width), ah = CGFloat(asset.height)
         let inset = logo.mode == "template" ? 0.0 : 0.03
         let area = frame.insetBy(dx: frame.width * inset, dy: frame.height * inset)
-        let w = min(frame.width * CGFloat(logo.width), area.width, area.height / aspect)
-        let h = w * aspect
+        let w = frame.width * CGFloat(logo.width)
+        let h = w * ah / max(1, aw)
         let rect = CGRect(x: area.minX + (area.width-w) * CGFloat(logo.x),
                           y: area.minY + (area.height-h) * CGFloat(logo.y), width: w, height: h)
-        Canvas { context, _ in
-            context.opacity = logo.opacity
-            context.draw(Image(decorative: asset, scale: 1), in: rect)
-        }.allowsHitTesting(false)
+        ZStack {
+            Canvas { context, _ in
+                context.opacity = logo.opacity
+                context.draw(Image(decorative: asset, scale: 1), in: rect)
+            }.allowsHitTesting(false)
+            if editable && hovering {
+                RoundedRectangle(cornerRadius: 2)
+                    .stroke(Color.white.opacity(0.35), lineWidth: 1)
+                    .frame(width: max(12, rect.width), height: max(12, rect.height))
+                    .position(x: rect.midX, y: rect.midY)
+                    .allowsHitTesting(false)
+            }
+            if editable {
+                Rectangle().fill(Color.clear)
+                    .frame(width: max(12, rect.width), height: max(12, rect.height))
+                    .position(x: rect.midX, y: rect.midY)
+                    .contentShape(Rectangle())
+                    .onHover { inside in
+                        hovering = inside
+                        if inside { NSCursor.openHand.set() } else { NSCursor.arrow.set() }
+                    }
+                    .gesture(DragGesture(minimumDistance: 1)
+                        .onChanged { value in
+                            NSCursor.closedHand.set()
+                            let dx = value.translation.width - lastTranslation.width
+                            let dy = value.translation.height - lastTranslation.height
+                            lastTranslation = value.translation
+                            onMove(dx, dy, frame, rect)
+                        }
+                        .onEnded { _ in
+                            lastTranslation = .zero
+                            NSCursor.openHand.set()
+                        })
+            }
+        }
     }
 }
 
@@ -724,5 +848,18 @@ private struct WindowTitleAccessor: NSViewRepresentable {
     }
     func updateNSView(_ view: NSView, context: Context) {
         DispatchQueue.main.async { view.window?.title = title }
+    }
+}
+
+
+private struct LogoGlyph: View {
+    var body: some View {
+        Text("Logo")
+            .font(.system(size: 10, weight: .semibold, design: .serif))
+            .italic()
+            .rotationEffect(.degrees(-24))
+            .minimumScaleFactor(0.7)
+            .lineLimit(1)
+            .padding(.horizontal, 2)
     }
 }

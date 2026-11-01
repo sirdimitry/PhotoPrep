@@ -92,7 +92,7 @@ public enum OutputEditing {
                           width: Double(width) * (1 - 2 * areaInset),
                           height: Double(height) * (1 - 2 * areaInset))
         let aspect = Double(asset.height) / Double(max(1, asset.width))
-        let lw = min(Double(width) * logo.width, area.width, area.height / aspect)
+        let lw = Double(width) * logo.width
         let lh = lw * aspect
         let lx = area.minX + (area.width - lw) * logo.x
         let ly = area.minY + (area.height - lh) * logo.y
@@ -105,13 +105,15 @@ public enum OutputEditing {
         }
         ctx.draw(asset, in: CGRect(x: 0, y: 0, width: asset.width, height: asset.height))
         var out = source.pixels
-        for y in 0..<Int(lh) {
+        let left = max(0, Int(floor(lx))), right = min(width, Int(ceil(lx + lw)))
+        let top = max(0, Int(floor(ly))), bottom = min(height, Int(ceil(ly + lh)))
+        guard left < right, top < bottom else { return StraightImage(width: width, height: height, pixels: out) }
+        for oy in top..<bottom {
             if isCancelled() { throw OutputEditingError.cancelled }
-            for x in 0..<Int(lw) {
-                let ox = Int(lx) + x, oy = Int(ly) + y
-                guard ox >= 0, oy >= 0, ox < width, oy < height else { continue }
-                let u = Int((Double(x) + 0.5) * Double(asset.width) / lw)
-                let v = Int((Double(y) + 0.5) * Double(asset.height) / lh)
+            for ox in left..<right {
+                let x = Double(ox) - lx, y = Double(oy) - ly
+                let u = Int(x / lw * Double(asset.width))
+                let v = Int(y / lh * Double(asset.height))
                 let si = (min(asset.height - 1, v) * asset.width + min(asset.width - 1, u)) * 4
                 let la = Double(logoPixels[si + 3]) / 255.0
                 let sa = la * logo.opacity
