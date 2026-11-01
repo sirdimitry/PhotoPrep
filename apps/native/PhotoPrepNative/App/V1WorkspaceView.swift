@@ -271,6 +271,10 @@ struct V1WorkspaceView: View {
                         CropCanvas(image: image, crop: crop, outputAspect: model.outputAspect,
                                    documentSize: CGSize(width: header.width, height: header.height),
                                    onChange: { model.setCrop($0) })
+                        V1CanvasGuides(imageSize: CGSize(width: header.width, height: header.height),
+                                       imageRect: cropImageRect(size: geo.size, crop: crop,
+                                                                documentSize: CGSize(width: header.width, height: header.height)),
+                                       crop: crop, backingScale: displayScale)
                     } else if let image = model.displayImage, let header = current {
                         BrushCanvas(image: image, strokes: model.strokes, tool: model.tool,
                                     brushWidth: model.brushWidth, showMask: model.showMask,
@@ -334,6 +338,18 @@ struct V1WorkspaceView: View {
         let fit = min(available.width / CGFloat(header.width), available.height / CGFloat(header.height))
         return Double(fit) * Double(max(1, displayScale))
     }
+    private func cropImageRect(size: CGSize, crop: SessionCrop, documentSize: CGSize) -> CGRect {
+        let available = CGRect(origin: .zero, size: size).insetBy(dx: 24, dy: 24)
+        var fw = max(20, available.width), fh = fw / CGFloat(model.outputAspect)
+        if fh > available.height { fh = max(20, available.height); fw = fh * CGFloat(model.outputAspect) }
+        let frame = CGRect(x: (size.width-fw)/2, y: (size.height-fh)/2, width: fw, height: fh)
+        let dw = frame.width / CGFloat(max(0.01, crop.width))
+        let dh = frame.height / CGFloat(max(0.01, crop.height))
+        return CGRect(x: frame.minX - CGFloat(crop.x)*dw,
+                      y: frame.minY - CGFloat(crop.y)*dh,
+                      width: dw, height: dh)
+    }
+
     private var zoomPercent: Int {
         let value = model.canvasView.fit ? fitZoom : model.canvasView.zoom
         return Int((value * 100).rounded())

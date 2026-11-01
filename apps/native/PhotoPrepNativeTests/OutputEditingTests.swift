@@ -77,4 +77,18 @@ final class OutputEditingTests: XCTestCase {
         XCTAssertTrue(try ExportWriter.writeExclusive(png, to: target))
         XCTAssertFalse(try ExportWriter.writeExclusive(png, to: target))
     }
+    func testCropKeepsTopLeftOrientation() throws {
+        var p = [UInt8](repeating: 0, count: 8 * 8 * 4)
+        for y in 0..<8 { for x in 0..<8 {
+            let i=(y*8+x)*4
+            if y < 4 { p[i]=220; p[i+1]=20; p[i+2]=20 } else { p[i]=20; p[i+1]=20; p[i+2]=220 }
+            p[i+3]=255
+        }}
+        let src = StraightImage(width:8,height:8,pixels:p)
+        let out = try OutputEditing.crop(src, to: SessionCrop(x:0,y:0,width:1,height:0.5), width:8,height:4)
+        XCTAssertGreaterThan(out.pixels[0], 180)
+        XCTAssertGreaterThan(out.pixels[(3*8+3)*4], 180)
+        XCTAssertLessThan(out.pixels[(3*8+3)*4+2], 60)
+    }
+
 }
