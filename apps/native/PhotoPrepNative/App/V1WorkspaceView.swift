@@ -854,12 +854,18 @@ private struct WindowTitleAccessor: NSViewRepresentable {
 
 private struct LogoGlyph: View {
     var body: some View {
-        Text("Logo")
-            .font(.system(size: 10, weight: .semibold, design: .serif))
-            .italic()
-            .rotationEffect(.degrees(-24))
-            .minimumScaleFactor(0.7)
-            .lineLimit(1)
-            .padding(.horizontal, 2)
+        Group {
+            if let url = Bundle.main.url(forResource: "LogoGlyph", withExtension: "png"),
+               let image = NSImage(contentsOf: url) {
+                Image(nsImage: image)
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                Image(systemName: "signature")
+            }
+        }
+        .frame(width: 36, height: 24)
+        .accessibilityLabel("Логотип")
     }
 }
