@@ -272,8 +272,10 @@ final class BrushCanvasView: NSView {
         if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
         resignObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification,
                                                                 object: window, queue: .main) { [weak self] _ in
-            self?.spaceDown = false
-            self?.cursorOverlay.isHidden = true
+            Task { @MainActor [weak self] in
+                self?.spaceDown = false
+                self?.cursorOverlay.isHidden = true
+            }
         }
         if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
