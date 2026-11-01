@@ -247,6 +247,7 @@ struct V1WorkspaceView: View {
 
     private func selectTool(_ value: V1PanelTool) {
         if model.cropMode && value != .crop { model.commitCrop() }
+        if value == .logo { model.ensureLogoForCurrentPhoto() }
         tool = value
     }
 
@@ -711,8 +712,6 @@ struct V1WorkspaceView: View {
                               format: .number.precision(.fractionLength(0)))
                         .textFieldStyle(.roundedBorder).frame(width: 64)
                     Text("px").font(.system(size: 9)).foregroundStyle(.secondary)
-                    Button("−10") { model.updateLogo(x: logo.x - 10) }.buttonStyle(InspectorButtonStyle(height: 22))
-                    Button("+10") { model.updateLogo(x: logo.x + 10) }.buttonStyle(InspectorButtonStyle(height: 22))
                 }
                 HStack(spacing: 6) {
                     Text("Y").font(.system(size: 10)).frame(width: 12)
@@ -720,28 +719,17 @@ struct V1WorkspaceView: View {
                               format: .number.precision(.fractionLength(0)))
                         .textFieldStyle(.roundedBorder).frame(width: 64)
                     Text("px").font(.system(size: 9)).foregroundStyle(.secondary)
-                    Button("−10") { model.updateLogo(y: logo.y - 10) }.buttonStyle(InspectorButtonStyle(height: 22))
-                    Button("+10") { model.updateLogo(y: logo.y + 10) }.buttonStyle(InspectorButtonStyle(height: 22))
                 }
                 HStack {
-                    Button(t("Применить ко всем", "Apply to all")) { model.applyLogoToAll() }
+                    Button(t("Другой PNG…", "Another PNG…")) { model.chooseLogo() }
                         .buttonStyle(InspectorButtonStyle())
-                    Button(t("Убрать", "Remove")) { model.removeLogo() }
+                    Button(t("Удалить логотип", "Delete logo")) { model.removeLogo() }
                         .buttonStyle(InspectorButtonStyle())
                 }.font(.system(size: 11))
-                Button(t("Другой PNG…", "Another PNG…")) { model.chooseLogo() }
-                    .buttonStyle(InspectorButtonStyle())
             } else {
-                if let saved = model.persistedLogoName {
-                    Text(saved).font(.system(size: 10)).lineLimit(1).truncationMode(.middle)
-                    Button(t("Применить сохранённый логотип", "Apply saved logo")) { model.applyPersistedLogo() }
-                        .buttonStyle(InspectorButtonStyle(primary: true))
-                    Text(t("Логотип не накладывается автоматически на новые фото.", "The logo is not applied automatically to new photos."))
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                }
                 Button(t("Выбрать PNG-логотип…", "Choose PNG logo…")) { model.chooseLogo() }
                     .buttonStyle(InspectorButtonStyle())
-                Text(t("Локальный PNG с alpha. Применяется к одному фото или коллекции.", "Local PNG with alpha. Applies to one photo or collection."))
+                Text(t("Локальный PNG с alpha. Логотип применяется к текущей фотографии.", "Local PNG with alpha. Applies to the current photo."))
                     .font(.system(size: 10)).foregroundStyle(.secondary)
             }
         }

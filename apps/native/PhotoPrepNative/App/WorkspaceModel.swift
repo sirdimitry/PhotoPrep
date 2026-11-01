@@ -1095,8 +1095,9 @@ final class WorkspaceModel: ObservableObject {
                 do {
                     let asset = try OutputEditing.loadLogo(url.path, mode: "logo")
                     var state = self.editStates[selected] ?? PhotoEditState()
-                    state.logo = SessionLogo(path: url.path, width: 0.15, opacity: 1, x: 0, y: 0,
-                                             enabled: true, mode: "logo")
+                    state.logo = SessionLogo(path: url.path,
+                                             width: Double(asset.width) / Double(max(1, self.sessionOutputWidth)),
+                                             opacity: 1, x: 0, y: 0, enabled: true, mode: "logo")
                     self.editStates[selected] = state
                     self.logo = state.logo
                     self.logoAsset = asset
@@ -1126,6 +1127,8 @@ final class WorkspaceModel: ObservableObject {
         state.logo = value
         editStates[selected] = state
         logo = value
+        persistedLogo = value
+        schedulePersistLogo(value)
         isDirty = true
     }
 
@@ -1147,6 +1150,9 @@ final class WorkspaceModel: ObservableObject {
         editStates[selected] = state
         logo = nil
         logoAsset = nil
+        persistedLogo = nil
+        persistedLogoBookmark = nil
+        UserDefaults.standard.removeObject(forKey: Self.logoDefaultsKey)
         isDirty = true
     }
 
@@ -1165,6 +1171,18 @@ final class WorkspaceModel: ObservableObject {
         logo = value
         loadLogoAsset(value)
         isDirty = true
+    }
+
+    func ensureLogoForCurrentPhoto() {
+        guard let selected, editStates[selected]?.logo == nil, var value = persistedLogo else { return }
+        value.enabled = true
+        value.mode = "logo"
+        value.opacity = 1
+        var state = editStates[selected] ?? PhotoEditState()
+        state.logo = value
+        editStates[selected] = state
+        logo = value
+        loadLogoAsset(value)
     }
 
     private func schedulePersistLogo(_ value: SessionLogo) {
