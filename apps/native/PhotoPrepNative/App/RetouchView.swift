@@ -1,0 +1,660 @@
+import SwiftUI
+import AppKit
+
+struct BrushCanvas: NSViewRepresentable {
+    let image: CGImage?
+    let strokes: [MaskStroke]
+    let tool: RetouchTool
+    let brushWidth: Double
+    let showMask: Bool
+    let documentSize: CGSize
+    let viewport: SessionView
+    let panEnabled: Bool
+    let drawingEnabled: Bool
+    let cursorEnabled: Bool
+    let onCommit: (MaskStroke) -> Void
+    let onViewChange: (SessionView) -> Void
+    var compositionRect: CGRect? = nil
+    var onImageScale: ((Double, CGPoint) -> Void)? = nil
+    var onImagePan: ((CGSize) -> Void)? = nil
+
+    func makeNSView(context: Context) -> BrushCanvasView {
+        let view = BrushCanvasView()
+        view.onCommit = onCommit
+        view.onViewChange = onViewChange
+        return view
+    }
+
+    func updateNSView(_ view: BrushCanvasView, context: Context) {
+        view.compositionRect = compositionRect
+        view.onImageScale = onImageScale
+        view.onImagePan = onImagePan
+        view.image = image
+        view.strokes = strokes
+        view.tool = tool
+        let sizeChanged = view.brushWidth != brushWidth
+        view.brushWidth = brushWidth
+        view.showMask = showMask
+        view.documentSize = documentSize
+        view.viewport = viewport
+        view.panEnabled = panEnabled
+        view.drawingEnabled = drawingEnabled
+        view.cursorEnabled = cursorEnabled
+        view.onCommit = onCommit
+        view.onViewChange = onViewChange
+        if sizeChanged { view.previewBrushSize() }
+        view.refreshCursorOverlay()
+        view.needsDisplay = true
+    }
+}
+
+final class BrushCanvasView: NSView {
+    var compositionRect: CGRect?
+    var onImageScale: ((Double, CGPoint) -> Void)?
+    var onImagePan: ((CGSize) -> Void)?
+    var image: CGImage?
+    var strokes: [MaskStroke] = []
+    var tool: RetouchTool = .brush
+    var brushWidth: Double = 0.06
+    var showMask = true
+    var documentSize = CGSize(width: 1, height: 1)
+    var viewport = SessionView()
+    var panEnabled = false
+    var drawingEnabled = true
+    var cursorEnabled = true
+    private let cursorOverlay = CursorOverlayView()
+    var onCommit: ((MaskStroke) -> Void)?
+    var onViewChange: ((SessionView) -> Void)?
+    private var currentStroke: MaskStroke?
+    private var panStart: (point: CGPoint, view: SessionView, fitZoom: Double)?
+    private var spaceDown = false
+    private var tracking: NSTrackingArea?
+    private var cursorPoint: CGPoint?
+    private var eventMonitor: Any?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        cursorOverlay.autoresizingMask = [.width, .height]
+        addSubview(cursorOverlay)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    private var backingScale: CGFloat {
+        max(1, window?.backingScaleFactor ?? 2)
+    }
+
+    private var fitZoom: Double {
+        let available = bounds.insetBy(dx: 8, dy: 8)
+        guard available.width > 0, available.height > 0, documentSize.width > 0, documentSize.height > 0 else { return 1 }
+        let fit = min(available.width / documentSize.width, available.height / documentSize.height)
+        return Double(fit) * Double(backingScale)
+    }
+
+    private var imageRect: CGRect {
+        if let compositionRect { return compositionRect }
+        guard let image, image.width > 0, image.height > 0, documentSize.width > 0, documentSize.height > 0 else { return .zero }
+        let available = bounds.insetBy(dx: 8, dy: 8)
+        guard available.width > 0, available.height > 0 else { return .zero }
+        let fit = min(available.width / documentSize.width, available.height / documentSize.height)
+        // 100% is one oriented source pixel per backing pixel.
+        let actual = viewport.fit ? fit : (1 / backingScale) * CGFloat(max(0.05, viewport.zoom))
+        let size = CGSize(width: documentSize.width * actual, height: documentSize.height * actual)
+        let originX = bounds.midX - CGFloat(viewport.centerX) * size.width
+        let originY = bounds.midY - (1 - CGFloat(viewport.centerY)) * size.height
+        return CGRect(x: originX, y: originY, width: size.width, height: size.height)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let image, image.width > 0, image.height > 0 else { return }
+        let rect = imageRect
+        guard rect.width > 0, rect.height > 0 else { return }
+        NSGraphicsContext.current?.imageInterpolation = .high
+        NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+            .draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+
+        guard showMask else { return }
+        var visible = strokes
+        if let currentStroke { visible.append(currentStroke) }
+        guard !visible.isEmpty, let context = NSGraphicsContext.current?.cgContext else { return }
+        let maxEdge = 2048
+        let ratio = min(1, CGFloat(maxEdge) / max(rect.width, rect.height))
+        let maskWidth = max(1, Int((rect.width * ratio).rounded()))
+        let maskHeight = max(1, Int((rect.height * ratio).rounded()))
+        let mask = MaskRenderer.render(width: maskWidth, height: maskHeight, strokes: visible)
+        guard let maskImage = Self.grayImage(mask, width: maskWidth, height: maskHeight) else { return }
+        context.saveGState()
+        context.clip(to: rect, mask: maskImage)
+        NSColor.systemYellow.withAlphaComponent(0.28).setFill()
+        rect.fill()
+        context.restoreGState()
+    }
+
+    private static let outlineCursor = NSCursor(
+        image: NSImage(size: NSSize(width: 16, height: 16), flipped: false) { _ in true },
+        hotSpot: NSPoint(x: 8, y: 8))
+
+    func previewBrushSize() {
+        if cursorPoint == nil {
+            let visible = imageRect.intersection(bounds)
+            cursorPoint = CGPoint(x: visible.midX, y: visible.midY)
+        }
+        refreshCursorOverlay()
+    }
+
+    func refreshCursorOverlay() {
+        let enabled = cursorEnabled && drawingEnabled && !spaceDown && !panEnabled
+        guard enabled, let point = cursorPoint else { cursorOverlay.isHidden = true; return }
+        let diameter = CGFloat(MaskRenderer.diameter(normalizedWidth: brushWidth, width: imageRect.width, height: imageRect.height))
+        cursorOverlay.isHidden = false
+        cursorOverlay.update(center: point, diameter: diameter,
+                             backingScale: window?.backingScaleFactor ?? 2)
+        cursorOverlay.frame = bounds
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.activeInKeyWindow, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect], owner: self, userInfo: nil)
+        addTrackingArea(area); tracking = area
+    }
+    override func mouseMoved(with event: NSEvent) {
+        cursorPoint = convert(event.locationInWindow, from: nil)
+        refreshCursorOverlay()
+        if drawingEnabled && !panEnabled { Self.outlineCursor.set() }
+        else { NSCursor.openHand.set() }
+    }
+    override func mouseExited(with event: NSEvent) {
+        cursorOverlay.isHidden = true
+    }
+    override func mouseEntered(with event: NSEvent) {
+        cursorPoint = convert(event.locationInWindow, from: nil)
+        refreshCursorOverlay()
+    }
+    override func layout() { super.layout(); cursorOverlay.frame = bounds; refreshCursorOverlay() }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: (panEnabled || spaceDown) ? .openHand : Self.outlineCursor)
+    }
+
+    private func normalizedPoint(_ event: NSEvent) -> MaskPoint? {
+        let rect = imageRect
+        guard rect.width > 0, rect.height > 0 else { return nil }
+        let point = convert(event.locationInWindow, from: nil)
+        guard rect.contains(point) else { return nil }
+        return MaskPoint(
+            x: min(1, max(0, Double((point.x - rect.minX) / rect.width))),
+            y: min(1, max(0, Double(1.0 - (point.y - rect.minY) / rect.height)))
+        )
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        let p = convert(event.locationInWindow, from: nil)
+        if panEnabled || spaceDown {
+            panStart = (p, viewport, viewport.fit ? fitZoom : viewport.zoom)
+            cursorOverlay.isHidden = true
+            NSCursor.closedHand.push()
+            return
+        }
+        guard drawingEnabled, image != nil, let point = normalizedPoint(event) else { return }
+        currentStroke = MaskStroke(points: [point], width: brushWidth, erase: tool == .eraser)
+        cursorPoint = p
+        refreshCursorOverlay()
+        needsDisplay = true
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        if let start = panStart {
+            if let onImagePan {
+                onImagePan(CGSize(width: p.x - start.point.x, height: p.y - start.point.y))
+                panStart = (p, start.view, start.fitZoom)
+                return
+            }
+            let rect = imageRect
+            guard rect.width > 0, rect.height > 0 else { return }
+            var next = start.view
+            next.fit = false
+            next.zoom = start.fitZoom
+            next.centerX = min(1, max(0, start.view.centerX - Double((p.x - start.point.x) / rect.width)))
+            next.centerY = min(1, max(0, start.view.centerY + Double((p.y - start.point.y) / rect.height)))
+            viewport = next
+            onViewChange?(next)
+            cursorPoint = p
+            refreshCursorOverlay()
+            needsDisplay = true
+            return
+        }
+        guard var stroke = currentStroke, let point = normalizedPoint(event) else { return }
+        if let last = stroke.points.last {
+            let dx = point.x - last.x
+            let dy = point.y - last.y
+            if dx * dx + dy * dy < 0.000004 { return }
+        }
+        stroke.points.append(point)
+        currentStroke = stroke
+        cursorPoint = p
+        refreshCursorOverlay()
+        needsDisplay = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer {
+            currentStroke = nil
+            needsDisplay = true
+        }
+        if panStart != nil {
+            panStart = nil
+            NSCursor.pop()
+            return
+        }
+        guard let stroke = currentStroke, !stroke.points.isEmpty else { return }
+        onCommit?(stroke)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 49 { spaceDown = true; window?.invalidateCursorRects(for: self); return }
+        super.keyDown(with: event)
+    }
+
+    override func keyUp(with event: NSEvent) {
+        if event.keyCode == 49 { spaceDown = false; window?.invalidateCursorRects(for: self); return }
+        super.keyUp(with: event)
+    }
+
+    private var resignObserver: NSObjectProtocol?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.makeFirstResponder(self)
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
+        resignObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification,
+                                                                object: window, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.spaceDown = false
+                self?.cursorOverlay.isHidden = true
+            }
+        }
+        if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
+            guard let self, event.window == self.window else { return event }
+            let point = self.convert(event.locationInWindow, from: nil)
+            if self.bounds.contains(point) {
+                self.cursorPoint = point
+                self.refreshCursorOverlay()
+            } else { self.cursorOverlay.isHidden = true }
+            return event
+        }
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil {
+            if let eventMonitor { NSEvent.removeMonitor(eventMonitor); self.eventMonitor = nil }
+            if let resignObserver { NotificationCenter.default.removeObserver(resignObserver); self.resignObserver = nil }
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    override func magnify(with event: NSEvent) {
+        guard image != nil else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        zoom(by: 1 + Double(event.magnification), at: point)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        guard image != nil, event.scrollingDeltaY != 0 else { return }
+        let delta = Double(event.scrollingDeltaY) * (event.hasPreciseScrollingDeltas ? 0.012 : 0.10)
+        zoom(by: exp(min(0.45, max(-0.45, delta))), at: convert(event.locationInWindow, from: nil))
+        refreshCursorOverlay()
+    }
+
+    private func zoom(by factor: Double, at point: CGPoint) {
+        if let onImageScale {
+            onImageScale(factor, point)
+            refreshCursorOverlay()
+            return
+        }
+        let rect = imageRect
+        guard rect.width > 0, rect.height > 0 else { return }
+        var next = viewport
+        let old = viewport.fit ? fitZoom : viewport.zoom
+        next.fit = false; next.zoom = min(8, max(0.1, old * factor))
+        let newRectScale = (1 / backingScale) * next.zoom
+        let newW = documentSize.width * newRectScale, newH = documentSize.height * newRectScale
+        let px = (point.x - rect.minX) / rect.width
+        let pyBottom = (point.y - rect.minY) / rect.height
+        next.centerX = min(1, max(0, Double(px) - Double(point.x - bounds.midX) / Double(newW)))
+        let centerBottom = Double(pyBottom) - Double(point.y - bounds.midY) / Double(newH)
+        next.centerY = min(1, max(0, 1 - centerBottom))
+        viewport = next; onViewChange?(next); needsDisplay = true
+        refreshCursorOverlay()
+    }
+
+    private static func grayImage(_ bytes: [UInt8], width: Int, height: Int) -> CGImage? {
+        guard width > 0, height > 0, bytes.count == width * height,
+              let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
+        return CGImage(
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bitsPerPixel: 8,
+            bytesPerRow: width,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: false,
+            intent: .defaultIntent
+        )
+    }
+}
+
+final class CursorOverlayView: NSView {
+    private var center: CGPoint = .zero
+    private var diameter: CGFloat = 1
+    private var scale: CGFloat = 2
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = false
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    func update(center: CGPoint, diameter: CGFloat, backingScale: CGFloat) {
+        self.center = center; self.diameter = diameter; self.scale = max(1, backingScale)
+        needsDisplay = true
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        guard diameter > 1 else { return }
+        let rect = CGRect(x: center.x - diameter/2, y: center.y - diameter/2,
+                          width: diameter, height: diameter)
+        let outer = NSBezierPath(ovalIn: rect)
+        NSColor.black.withAlphaComponent(0.45).setStroke()
+        outer.lineWidth = 2 / scale; outer.stroke()
+        let inner = NSBezierPath(ovalIn: rect.insetBy(dx: 1/scale, dy: 1/scale))
+        NSColor.white.withAlphaComponent(0.75).setStroke()
+        inner.lineWidth = 1 / scale; inner.stroke()
+    }
+}
+
+struct RetouchPanel: View {
+    @ObservedObject var model: WorkspaceModel
+    let language: String
+    @State private var exportFormat: ExportFormat = .png
+    private var ru: Bool { language == "ru" }
+    private func text(_ russian: String, _ english: String) -> String { ru ? russian : english }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(text("Ретушь", "Retouch"), systemImage: "paintbrush.pointed").font(.headline)
+            Text(text("Удаление логотипов и восстановление фона",
+                      "Logo removal and background restoration")).font(.subheadline)
+            Picker("", selection: $model.tool) {
+                Text(text("Кисть", "Brush")).tag(RetouchTool.brush)
+                Text(text("Ластик", "Eraser")).tag(RetouchTool.eraser)
+            }.pickerStyle(.segmented)
+            HStack {
+                Text(text("Размер", "Size")).font(.caption)
+                Slider(value: $model.brushWidth, in: 0.01...0.25)
+            }
+            HStack {
+                Button(text("Отменить штрих", "Undo Stroke")) { model.undoLastStroke() }
+                    .disabled(!model.canUndoStroke)
+                Button(text("Очистить", "Clear")) { model.clearMask() }
+                    .disabled(model.strokes.isEmpty || model.retouchBusy)
+            }
+            if model.passCount > 0 {
+                HStack {
+                    Text(text("Проходов: \(model.passCount)", "Passes: \(model.passCount)"))
+                        .font(.caption)
+                    Spacer()
+                    Button(text("Отменить проход", "Undo Pass")) { model.undoLastPass() }
+                        .font(.caption)
+                        .disabled(!model.canUndoPass)
+                }
+            }
+            if model.passCount > 0 && model.resultImage == nil && !model.retouchBusy {
+                Button(text("Восстановить результат", "Restore result")) {
+                    model.restoreCurrentResult()
+                }
+                .font(.caption)
+            }
+            HStack {
+                Button(text("Кадрирование", "Crop")) { model.beginCrop() }
+                    .disabled(model.selected == nil || model.retouchBusy)
+                if model.cropMode {
+                    Button(text("Готово", "Done")) { model.cropMode = false }
+                    Button(text("Сбросить", "Reset")) { model.resetCrop() }
+                }
+                Button(text("Отменить кадр", "Undo Crop")) { model.undoCrop() }
+                    .disabled(model.crop == nil || model.retouchBusy)
+            }.font(.caption)
+
+            if let logo = model.logo {
+                Divider()
+                Text(text("Логотип", "Logo")).font(.caption).bold()
+                HStack {
+                    Text(text("Размер", "Size")).font(.caption2)
+                    Slider(value: Binding(get: { logo.width }, set: { model.updateLogo(width: $0) }), in: 0.01...0.94)
+                }
+                HStack {
+                    Text(text("Прозрачность", "Opacity")).font(.caption2)
+                    Slider(value: Binding(get: { logo.opacity }, set: { model.updateLogo(opacity: $0) }), in: 0...1)
+                }
+                HStack {
+                    Button(text("Применить ко всем", "Apply to all")) { model.applyLogoToAll() }
+                    Button(text("Убрать", "Remove")) { model.removeLogo() }
+                }.font(.caption)
+            } else {
+                Button(text("Выбрать PNG-логотип…", "Choose PNG logo…")) { model.chooseLogo() }
+                    .font(.caption)
+            }
+
+            Button {
+                model.processMask()
+            } label: {
+                Label(text("Удалить логотип", "Remove Logo"), systemImage: "wand.and.stars")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.yellow)
+            .disabled(!model.canProcess)
+
+            if model.retouchBusy {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(model.retouchPhase == "preparing"
+                         ? text("Подготовка…", "Preparing…")
+                         : text("Обработка…", "Processing…"))
+                        .font(.caption)
+                    Spacer()
+                    Button(text("Отмена", "Cancel")) { model.cancelRetouch() }
+                        .font(.caption)
+                }
+            }
+            if model.resultImage != nil {
+                Toggle(text("Показать результат", "Show result"), isOn: $model.showingAfter)
+                    .toggleStyle(.switch)
+                    .font(.caption)
+                Text(text("До/После: выключите, чтобы увидеть оригинал.",
+                          "Before/After: turn off to see the original."))
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            if model.sourceNeedsDecision {
+                Text(text("Исходник изменился. Рецепты сохранены; выберите действие.",
+                          "The source changed. Recipes are preserved; choose an action."))
+                    .font(.caption).foregroundStyle(.orange)
+                HStack {
+                    Button(text("Принять новый исходник", "Rebase source")) { model.rebaseSource() }
+                    Button(text("Сбросить рецепты", "Reset recipes")) { model.resetEdits() }
+                }.font(.caption)
+            }
+            if let error = model.retouchError {
+                Text(message(error)).font(.caption).foregroundStyle(.orange)
+            }
+            if model.pressure != .normal {
+                Text(text("Недостаточно памяти: обработка приостановлена.",
+                          "Low memory: processing is paused."))
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            Divider()
+            Text(text("Экспорт", "Export")).font(.caption).bold()
+            HStack {
+                Picker("", selection: $exportFormat) {
+                    Text("PNG").tag(ExportFormat.png)
+                    Text("JPEG").tag(ExportFormat.jpeg)
+                }.pickerStyle(.segmented).frame(width: 130)
+                Button(text("Экспорт…", "Export…")) {
+                    model.exportPanel(format: exportFormat, quality: 0.92)
+                }.disabled(model.photos.isEmpty || model.exportBusy || model.sessionReadOnly != nil)
+            }
+            if model.exportBusy {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("\(model.exportDone)/\(model.exportTotal)").font(.caption)
+                    Spacer()
+                    Button(text("Отмена", "Cancel")) { model.cancelExport() }.font(.caption)
+                }
+            }
+            if let error = model.exportError {
+                Text(error).font(.caption).foregroundStyle(.orange)
+            }
+            Divider()
+            Label(text("Локальная обработка", "Local processing"), systemImage: "lock.shield")
+            Text(text("Одна модель LaMa, отдельный worker-процесс, без сети.",
+                      "One LaMa model, a separate worker process, no network."))
+                .font(.caption).foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(20)
+    }
+
+    private func message(_ code: String) -> String {
+        switch code {
+        case "empty_mask": return text("Маска пуста: нарисуйте область.", "The mask is empty: draw an area.")
+        case "source_changed": return text("Исходный файл изменился. Результат не применён.", "The source changed. The result was not applied.")
+        case "model_missing": return text("Модель LaMa не найдена в приложении.", "The LaMa model is missing from the app.")
+        case "unsupported_alpha": return text("Формат alpha не позволяет сохранить hidden RGB.", "This alpha layout cannot preserve hidden RGB.")
+        case "unsupported_color": return text("Неподдерживаемая цветовая модель (нужен RGB).", "Unsupported color model (RGB required).")
+        case "memory", "insufficient_memory": return text("Недостаточно памяти для этого фото.", "Not enough memory for this photo.")
+        case "timeout": return text("Обработка превысила таймаут; worker остановлен.", "Processing timed out; the worker was stopped.")
+        case "worker_crashed", "worker_launch_failed", "worker_failed": return text("Worker завершился с ошибкой. Приложение продолжает работу.", "The worker failed. The app is still running.")
+        case "invalid_output", "non_finite_output", "invalid_input": return text("Модель вернула некорректный результат.", "The model returned an invalid result.")
+        case "image_too_large": return text("Фото превышает лимит 40 Мп.", "The photo exceeds the 40 MP limit.")
+        case "invalid_image": return text("Не удалось прочитать фото или маску.", "Could not read the photo or mask.")
+        default: return text("Не удалось обработать фото.", "Could not process the photo.")
+        }
+    }
+}
+
+struct CropCanvas: NSViewRepresentable {
+    let image: CGImage?
+    let crop: SessionCrop
+    let outputAspect: Double
+    let documentSize: CGSize
+    let onChange: (SessionCrop) -> Void
+
+    func makeNSView(context: Context) -> CropCanvasView {
+        let view = CropCanvasView()
+        view.onChange = onChange
+        return view
+    }
+
+    func updateNSView(_ view: CropCanvasView, context: Context) {
+        view.image = image
+        view.crop = crop
+        view.outputAspect = outputAspect
+        view.documentSize = documentSize
+        view.onChange = onChange
+        view.needsDisplay = true
+    }
+}
+
+final class CropCanvasView: NSView {
+    var image: CGImage?
+    var crop = SessionCrop(x: 0, y: 0, width: 1, height: 1)
+    var outputAspect: Double = 1
+    var documentSize = CGSize(width: 1, height: 1)
+    var onChange: ((SessionCrop) -> Void)?
+    private var lastPoint: NSPoint?
+
+    private var frameRect: CGRect {
+        let available = bounds.insetBy(dx: 24, dy: 24)
+        guard available.width > 0, available.height > 0 else { return .zero }
+        var w = available.width, h = w / outputAspect
+        if h > available.height { h = available.height; w = h * outputAspect }
+        return CGRect(x: bounds.midX - w / 2, y: bounds.midY - h / 2, width: w, height: h)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.underPageBackgroundColor.setFill(); bounds.fill()
+        guard let image, image.width > 0, image.height > 0 else { return }
+        let frame = frameRect
+        guard frame.width > 0, crop.width > 0, crop.height > 0 else { return }
+        let displayW = frame.width / CGFloat(crop.width)
+        let displayH = frame.height / CGFloat(crop.height)
+        // NSView is bottom-left; crop is normalized from the top.
+        let rect = CGRect(x: frame.minX - CGFloat(crop.x) * displayW,
+                          y: frame.maxY - (1 - CGFloat(crop.y)) * displayH,
+                          width: displayW, height: displayH)
+        NSGraphicsContext.current?.imageInterpolation = .high
+        NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+            .draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+        NSColor.black.withAlphaComponent(0.55).setFill()
+        let outside = NSBezierPath(rect: bounds)
+        outside.append(NSBezierPath(rect: frame))
+        outside.windingRule = .evenOdd
+        outside.fill()
+        NSColor.systemYellow.setStroke()
+        let border = NSBezierPath(rect: frame); border.lineWidth = 2; border.stroke()
+    }
+
+    override func mouseDown(with event: NSEvent) { lastPoint = convert(event.locationInWindow, from: nil) }
+    override func mouseDragged(with event: NSEvent) {
+        guard let last = lastPoint else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let frame = frameRect
+        guard frame.width > 0 else { return }
+        let dx = Double(point.x - last.x) / Double(frame.width / CGFloat(crop.width))
+        let dy = Double(point.y - last.y) / Double(frame.height / CGFloat(crop.height))
+        var next = crop
+        next.x -= dx; next.y += dy
+        crop = next; lastPoint = point; onChange?(next); needsDisplay = true
+    }
+    override func mouseUp(with event: NSEvent) {
+        lastPoint = nil
+        let frame = frameRect
+        guard frame.width > 0, frame.height > 0 else { return }
+        let thresholdX = 10 / (frame.width / CGFloat(max(0.01, crop.width)))
+        let thresholdY = 10 / (frame.height / CGFloat(max(0.01, crop.height)))
+        var next = crop
+        if abs(next.x) < thresholdX { next.x = 0 }
+        if abs((1 - next.width) - next.x) < thresholdX { next.x = 1 - next.width }
+        if abs(next.y) < thresholdY { next.y = 0 }
+        if abs((1 - next.height) - next.y) < thresholdY { next.y = 1 - next.height }
+        if next != crop { crop = next; onChange?(next); needsDisplay = true }
+    }
+
+    override func magnify(with event: NSEvent) {
+        scaleImage(by: max(0.1, 1 + Double(event.magnification)), at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        guard image != nil, event.scrollingDeltaY != 0 else { return }
+        let delta = Double(event.scrollingDeltaY) * (event.hasPreciseScrollingDeltas ? 0.012 : 0.10)
+        scaleImage(by: exp(min(0.45, max(-0.45, delta))), at: convert(event.locationInWindow, from: nil))
+    }
+
+    private func scaleImage(by zoom: Double, at p: CGPoint) {
+        guard image != nil else { return }
+        let frame = frameRect
+        guard frame.width > 1, frame.height > 1 else { return }
+        let rx = min(1, max(0, (p.x - frame.minX) / frame.width))
+        let ryTop = min(1, max(0, (frame.maxY - p.y) / frame.height))
+        let next = PhotoComposition.scaledCrop(crop, factor: zoom, anchor: CGPoint(x: rx, y: ryTop),
+                                                sourceAspect: documentSize.width / documentSize.height,
+                                                outputAspect: outputAspect)
+        crop = next; onChange?(next); needsDisplay = true
+    }
+}

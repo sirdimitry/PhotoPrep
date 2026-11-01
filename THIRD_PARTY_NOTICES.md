@@ -1,11 +1,27 @@
 # Third-party components
 
+## Native 0.3.0 distribution
+
+PhotoPrep Native source is MIT-licensed. The native application uses Apple frameworks; it does not bundle the Python runtime or Python libraries described in the historical sections below.
+
+The bundled `LaMa-fp32.mlmodelc` is a Core ML conversion of big-lama. Changes: exportable Fourier operations, fixed 512×512 tensors, FP32 Core ML conversion/compilation. Original authors: Roman Suvorov, Elizaveta Logacheva, Anton Mashikhin, Anastasia Remizova, Arsenii Ashukha, Aleksei Silvestrov, Naejin Kong, Harshith Goka, Kiwoong Park, Victor Lempitsky.
+
+- Original code and model instructions: https://github.com/advimman/lama
+- Conversion source: https://github.com/Carve-Photos/lama, revision `f5fb39a18022c34a71bf9a47a6ec393c804b49ca`.
+- Checkpoint source and Apache-2.0 model-card declaration: https://huggingface.co/smartywu/big-lama
+- Checkpoint SHA256: `fccb7adffd53ec0974ee5503c3731c2c2f1e7e07856fd9228cdcc0b46fd5d423`.
+- Full Apache-2.0 text: [LICENSE-LaMa.txt](apps/native/PhotoPrepNative/Resources/LICENSE-LaMa.txt), also included inside the app's `Contents/Resources/Licenses` directory with this notice and PhotoPrep's MIT licence.
+
+The native DMG includes only the app, compiled model, public UI artwork and licence notices. User photos, test pictures, user PNG branding, caches and preferences are not bundled. The model is not committed to Git.
+
+## Historical Python distribution
+
 PhotoPrep is MIT-licensed. Its bundled libraries retain their own licences.
 The macOS package includes the licence and notice files supplied by the installed
 ONNX Runtime, NumPy, protobuf, certifi and Pillow distributions under `third-party/`.
 PySide6/Qt remains subject to its upstream LGPL/GPL/commercial licensing terms.
 
-## LaMa model (downloaded separately)
+### LaMa model (Python: downloaded separately)
 
 - LaMa: Roman Suvorov, Elizaveta Logacheva, Anton Mashikhin, Anastasia Remizova,
   Arsenii Ashukha, Aleksei Silvestrov, Naejin Kong, Harshith Goka, Kiwoong Park,
@@ -25,7 +41,7 @@ CPU. The model processes a 512 × 512 context region; PhotoPrep composites only
 inside the full-resolution mask and preserves all pixels outside it.
 
 
-## MI-GAN model (downloaded separately)
+### MI-GAN model (downloaded separately)
 
 - MI-GAN: Andranik Sargsyan, Shant Navasardyan, Xingqian Xu, Humphrey Shi.
   *MI-GAN: A Simple Baseline for Image Inpainting on Mobile Devices*, ICCV 2023.
@@ -44,7 +60,7 @@ Both model files are kept separately from the app and are verified before use.
 Pillow supplies JPEG/PNG encoding from fresh pixel buffers; its licence and
 third-party notices are included under `third-party/pillow/`.
 
-## SDXL Inpainting (optional weights)
+### SDXL Inpainting (optional weights)
 
 Official model: https://huggingface.co/diffusers/stable-diffusion-xl-1.0-inpainting-0.1
 Developed by the Diffusers team, initialized from Stability AI SDXL Base 1.0.

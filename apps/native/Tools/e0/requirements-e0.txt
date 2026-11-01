@@ -1,0 +1,24 @@
+# Separate E0 conversion environment (Python 3.12.4, macOS arm64).
+# Do not install these into the PhotoPrep application environment.
+torch==2.7.1
+torchvision==0.22.1
+coremltools==9.0
+numpy==2.2.6
+onnx==1.17.0
+onnxruntime==1.22.0
+Pillow==11.3.0
+omegaconf==2.3.0
+PyYAML==6.0.2
+easydict==1.13
+pytorch-lightning==2.5.3
+kornia==0.7.4
+scikit-image==0.25.2
+scikit-learn==1.7.2
+opencv-python-headless==4.11.0.86
+albumentations==2.0.8
+webdataset==0.2.111
+pandas==2.2.3
+joblib==1.4.2
+tqdm==4.67.1
+tabulate==0.9.0
+psutil==7.0.0

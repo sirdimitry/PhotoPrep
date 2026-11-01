@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0 — 2026-11-01 — PhotoPrep Native
+
+First native macOS DMG: SwiftUI/AppKit, local Core ML LaMa in an isolated worker, fixed-frame composition, mask/eraser, retained retouch results, custom PNG branding and export of all open photos. Area-filtered reduction improves small exports. Batch progress, per-file failures and local diagnostics are included. Apple Silicon/macOS 14+, ad-hoc signed, not notarized. No user images or branding are included. Python source/releases remain archived.
+
+
 ## v0.2.0 — 2026-10-29
 
 - Promote the working Python/PySide6 alpha.18 application to v0.2.0.
