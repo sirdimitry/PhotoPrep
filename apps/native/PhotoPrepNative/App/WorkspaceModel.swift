@@ -212,6 +212,7 @@ final class WorkspaceModel: ObservableObject {
     private var sessionTask: Task<Void, Never>?
     private var sessionGeneration = UUID()
     private var exportCancellation: CancellationFlag?
+    private var savePanel: NSSavePanel?
     private var sessionScope: URL?
     private var pressureHistory: [[String: Any]] = []
     private var authorizedSessionFolders: Set<String> = []
@@ -303,18 +304,19 @@ final class WorkspaceModel: ObservableObject {
     func saveSessionPanel() {
         guard !photos.isEmpty, !busy, pressure == .normal else { return }
         let panel = NSSavePanel()
+        savePanel = panel
         panel.allowedContentTypes = [.json]
         #if DEBUG
         if let directory = DebugLaunchOptions.panelDirectory { panel.directoryURL = directory }
         #endif
         panel.nameFieldStringValue = sessionURL?.lastPathComponent ?? "Untitled.photoprep.json"
-        panel.begin { [weak self] response in
-            guard response == .OK, var url = panel.url else { return }
-            if !url.lastPathComponent.lowercased().hasSuffix(".photoprep.json") {
-                url = url.deletingPathExtension().appendingPathExtension("photoprep.json")
-            }
-            Task { @MainActor [weak self] in await self?.saveSession(to: url) }
+        let response = panel.runModal()
+        savePanel = nil
+        guard response == .OK, var url = panel.url else { return }
+        if !url.lastPathComponent.lowercased().hasSuffix(".photoprep.json") {
+            url = url.deletingPathExtension().appendingPathExtension("photoprep.json")
         }
+        Task { @MainActor [weak self] in await self?.saveSession(to: url) }
     }
 
     var hasUnsavedEdits: Bool { isDirty }

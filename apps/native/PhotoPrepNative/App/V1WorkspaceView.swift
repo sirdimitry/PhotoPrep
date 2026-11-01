@@ -120,20 +120,25 @@ private struct V1PhotoThumb: View {
             .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color(white: 0.32), lineWidth: 0.5))
             Button { showInfo.toggle() } label: {
                 Image(systemName: "info.circle.fill")
-                    .font(.system(size: 13)).foregroundStyle(.white, Color.black.opacity(0.65))
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white, Color.black.opacity(0.75))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .padding(4)
+            .buttonStyle(.borderless)
+            .padding(2)
             .accessibilityLabel("Информация о файле")
             .help("Информация о файле")
-            .popover(isPresented: $showInfo, arrowEdge: .bottom) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(photo.url.lastPathComponent).font(.system(size: 12, weight: .semibold))
-                        .lineLimit(2).truncationMode(.middle)
+            .sheet(isPresented: $showInfo) {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Информация о файле").font(.system(size: 14, weight: .semibold))
+                    Text(photo.url.lastPathComponent).font(.system(size: 12, weight: .medium))
+                        .lineLimit(3).truncationMode(.middle)
                     Text("\(photo.width) × \(photo.height) · \(format)")
                     Text("Файл: \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))")
                     Text("Экспорт: \(exportWidth) × \(exportHeight)")
-                }.font(.system(size: 11)).padding(12).frame(width: 250)
+                    Button("Закрыть") { showInfo = false }.padding(.top, 6)
+                }.font(.system(size: 12)).padding(18).frame(width: 300, alignment: .leading)
             }
         }
         .task(id: photo.url) {
@@ -545,7 +550,9 @@ struct V1WorkspaceView: View {
             if model.crop != nil {
                 HStack {
                     Button(t("Готово", "Done")) { model.commitCrop(); tool = .brush }
+                        .keyboardShortcut(.defaultAction)
                     Button(t("Отмена", "Cancel")) { model.cancelCrop() }
+                        .keyboardShortcut(.cancelAction)
                     Button(t("Сбросить", "Reset")) { model.resetCrop() }
                 }.font(.system(size: 11))
             } else {
