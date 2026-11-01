@@ -95,54 +95,54 @@ private struct V1OutputFrame: View {
 
 private struct V1PhotoThumb: View {
     let photo: PhotoHeader
+    @State private var image: CGImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(decorative: image, scale: 1).resizable().aspectRatio(contentMode: .fill)
+            } else {
+                Color(white: 0.2).overlay(Image(systemName: "photo").foregroundStyle(.secondary))
+            }
+        }
+        .frame(width: 120, height: 80).clipped().cornerRadius(4)
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color(white: 0.32), lineWidth: 0.5))
+        .task(id: photo.url) {
+            image = await ThumbnailCache.shared.image(for: photo.url)
+        }
+    }
+}
+
+private struct V1PhotoInfoButton: View {
+    let photo: PhotoHeader
     let exportWidth: Int
     let exportHeight: Int
-    @State private var image: CGImage?
     @State private var showInfo = false
-
-    private var format: String {
-        photo.url.pathExtension.uppercased()
-    }
+    private var format: String { photo.url.pathExtension.uppercased() }
     private var bytes: Int64 {
         (try? photo.url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
     }
-
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            Group {
-                if let image {
-                    Image(decorative: image, scale: 1).resizable().aspectRatio(contentMode: .fill)
-                } else {
-                    Color(white: 0.2).overlay(Image(systemName: "photo").foregroundStyle(.secondary))
-                }
-            }
-            .frame(width: 120, height: 80).clipped().cornerRadius(4)
-            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color(white: 0.32), lineWidth: 0.5))
-            Button { showInfo.toggle() } label: {
-                Image(systemName: "info.circle.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white, Color.black.opacity(0.75))
-                    .frame(width: 24, height: 24)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.borderless)
-            .padding(2)
-            .accessibilityLabel("Информация о файле")
-            .help("Информация о файле")
-            .sheet(isPresented: $showInfo) {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("Информация о файле").font(.system(size: 14, weight: .semibold))
-                    Text(photo.url.lastPathComponent).font(.system(size: 12, weight: .medium))
-                        .lineLimit(3).truncationMode(.middle)
-                    Text("\(photo.width) × \(photo.height) · \(format)")
-                    Text("Файл: \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))")
-                    Text("Экспорт: \(exportWidth) × \(exportHeight)")
-                    Button("Закрыть") { showInfo = false }.padding(.top, 6)
-                }.font(.system(size: 12)).padding(18).frame(width: 300, alignment: .leading)
-            }
+        Button { showInfo.toggle() } label: {
+            Image(systemName: "info.circle.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white, Color.black.opacity(0.8))
+                .padding(3)
         }
-        .task(id: photo.url) {
-            image = await ThumbnailCache.shared.image(for: photo.url)
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .accessibilityLabel("Информация о файле")
+        .help("Информация о файле")
+        .sheet(isPresented: $showInfo) {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Информация о файле").font(.system(size: 14, weight: .semibold))
+                Text(photo.url.lastPathComponent).font(.system(size: 12, weight: .medium))
+                    .lineLimit(3).truncationMode(.middle)
+                Text("\(photo.width) × \(photo.height) · \(format)")
+                Text("Файл: \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))")
+                Text("Экспорт: \(exportWidth) × \(exportHeight)")
+                Button("Закрыть") { showInfo = false }.padding(.top, 6)
+            }.font(.system(size: 12)).padding(18).frame(width: 300, alignment: .leading)
         }
     }
 }
@@ -403,19 +403,25 @@ struct V1WorkspaceView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(model.photos) { photo in
-                        Button { model.selected = photo.url } label: {
-                            VStack(spacing: 3) {
-                                V1PhotoThumb(photo: photo, exportWidth: model.sessionOutputWidth, exportHeight: model.sessionOutputHeight)
-                                Text(photo.url.lastPathComponent).font(.system(size: 9)).lineLimit(1)
-                                    .truncationMode(.middle).frame(width: 120, alignment: .leading)
-                                    .foregroundStyle(model.selected == photo.url ? .white : .secondary)
-                            }
-                            .padding(4)
-                            .background(RoundedRectangle(cornerRadius: 6)
-                                .fill(model.selected == photo.url ? Color.yellow.opacity(0.18) : Color.clear))
-                            .overlay(RoundedRectangle(cornerRadius: 6)
-                                .stroke(model.selected == photo.url ? Color.yellow : Color.clear, lineWidth: 1))
-                        }.buttonStyle(.plain)
+                        ZStack(alignment: .topTrailing) {
+                            Button { model.selected = photo.url } label: {
+                                VStack(spacing: 3) {
+                                    V1PhotoThumb(photo: photo)
+                                    Text(photo.url.lastPathComponent).font(.system(size: 9)).lineLimit(1)
+                                        .truncationMode(.middle).frame(width: 120, alignment: .leading)
+                                        .foregroundStyle(model.selected == photo.url ? .white : .secondary)
+                                }
+                                .padding(4)
+                                .background(RoundedRectangle(cornerRadius: 6)
+                                    .fill(model.selected == photo.url ? Color.yellow.opacity(0.18) : Color.clear))
+                                .overlay(RoundedRectangle(cornerRadius: 6)
+                                    .stroke(model.selected == photo.url ? Color.yellow : Color.clear, lineWidth: 1))
+                            }.buttonStyle(.plain)
+                            V1PhotoInfoButton(photo: photo,
+                                              exportWidth: model.sessionOutputWidth,
+                                              exportHeight: model.sessionOutputHeight)
+                                .padding(3)
+                        }
                     }
                 }.padding(.horizontal, 12)
             }.frame(height: 96)
